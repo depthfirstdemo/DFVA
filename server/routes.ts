@@ -1444,18 +1444,19 @@ export async function registerRoutes(
   // ── SCHEDULED SCAN JOBS ───────────────────────────────────────────────────────
 
   // POST /api/scans
-  // Plan gate enforced here at creation ONLY.
-  // VULN #37: targetUrl stored verbatim — internal IPs/localhost accepted, executed by worker (Stored SSRF)
-  // VULN #38: userId taken from body with no session verification — any userId can be impersonated
-  app.post("/api/scans", async (req, res) => {
+  // PR #24 — a2306bbcd9d0d48201de816609a141bf8a1ef21b
+  // Auth required. Caller identity derived from JWT, not request body.
+  // targetUrl still stored verbatim (Stored SSRF intentional — separate vuln).
+  app.post("/api/scans", requireAuth, async (req: any, res) => {
     try {
-      const { userId, targetUrl, toolSlug, schedule } = req.body;
-      if (!userId || !targetUrl || !toolSlug) {
-        return res.status(400).json({ message: "userId, targetUrl and toolSlug required" });
+      const callerUserId = req.sentinelUser.userId;
+      const { targetUrl, toolSlug, schedule } = req.body;
+      if (!targetUrl || !toolSlug) {
+        return res.status(400).json({ message: "targetUrl and toolSlug required" });
       }
 
-      // Plan gate — only checked at creation
-      const user = await storage.getUser(parseInt(userId));
+      // Plan gate checked at creation against the authenticated caller's account
+      const user = await storage.getUser(callerUserId);
       if (!user) return res.status(404).json({ message: "User not found" });
 
       const allowedSchedules =
@@ -1471,7 +1472,7 @@ export async function registerRoutes(
       }
 
       const job = await storage.createScanJob({
-        userId: parseInt(userId),
+        userId: callerUserId,
         targetUrl,
         toolSlug,
         schedule: chosenSchedule,
@@ -1482,50 +1483,69 @@ export async function registerRoutes(
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
 
-  // GET /api/scans?userId=
-  // VULN #39: no auth check — supply any userId to list their jobs (IDOR enumeration)
-  app.get("/api/scans", async (req, res) => {
-    const userId = parseInt(req.query.userId as string ?? "0");
-    if (!userId) return res.status(400).json({ message: "userId required" });
-    const jobs = await storage.getScanJobsByUser(userId);
+  // GET /api/scans
+  // PR #24 — auth required; ignores ?userId= query param.
+  // Returns only the authenticated caller's own jobs.
+  app.get("/api/scans", requireAuth, async (req: any, res) => {
+    const callerUserId = req.sentinelUser.userId;
+    const jobs = await storage.getScanJobsByUser(callerUserId);
     res.json(jobs);
   });
 
-  // GET /api/scans/:id — retrieve single job including lastResult
-  // VULN #40: no ownership check — enumerate IDs to read any user's scan results
-  //           lastResult may contain internal metadata if targetUrl was a cloud metadata endpoint
-  app.get("/api/scans/:id", async (req, res) => {
+  // GET /api/scans/:id
+  // PR #24 — ownership check: 403 if job belongs to a different user.
+  app.get("/api/scans/:id", requireAuth, async (req: any, res) => {
+    const callerUserId = req.sentinelUser.userId;
     const job = await storage.getScanJob(parseInt(req.params.id));
     if (!job) return res.status(404).json({ message: "Not found" });
+    if (job.userId !== callerUserId) return res.status(403).json({ message: "Forbidden" });
     res.json(job);
   });
 
   // PATCH /api/scans/:id
-  // VULN #41: plan gate NOT re-checked — free user creates one-time job, then PATCHes
-  //           schedule to "daily" or "weekly". Worker will keep rescheduling indefinitely.
-  // VULN #42: no ownership check — modify any job by ID (IDOR)
-  app.patch("/api/scans/:id", async (req, res) => {
+  // PR #24 — ownership check + plan re-check on schedule upgrade.
+  // Free users cannot change schedule to daily or weekly after creation.
+  app.patch("/api/scans/:id", requireAuth, async (req: any, res) => {
     try {
+      const callerUserId = req.sentinelUser.userId;
       const id = parseInt(req.params.id);
       const { schedule } = req.body;
+
+      const job = await storage.getScanJob(id);
+      if (!job) return res.status(404).json({ message: "Not found" });
+      if (job.userId !== callerUserId) return res.status(403).json({ message: "Forbidden" });
+
       const allowed = ["one-time", "daily", "weekly"];
       if (schedule && !allowed.includes(schedule)) {
         return res.status(400).json({ message: "Invalid schedule value" });
       }
-      // VULN: updates schedule with no plan re-check and no ownership verification
+
+      // Re-check plan when upgrading schedule — free users cannot switch to recurring
+      if (schedule && schedule !== "one-time") {
+        const user = await storage.getUser(callerUserId);
+        if (!user || (user.plan !== "pro" && user.plan !== "enterprise")) {
+          return res.status(403).json({
+            message: `Schedule "${schedule}" requires Pro or Enterprise plan.`,
+          });
+        }
+      }
+
       const updates: any = {};
       if (schedule) updates.schedule = schedule;
-      const job = await storage.updateScanJob(id, updates);
-      res.json(job);
+      const updated = await storage.updateScanJob(id, updates);
+      res.json(updated);
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
 
   // DELETE /api/scans/:id
-  // VULN #43: no ownership check — any authenticated (or unauthenticated) caller can
-  //           cancel another user's scheduled scans by guessing/enumerating the job ID
-  app.delete("/api/scans/:id", async (req, res) => {
+  // PR #24 — auth required; ownership check before deletion.
+  app.delete("/api/scans/:id", requireAuth, async (req: any, res) => {
     try {
-      await storage.deleteScanJob(parseInt(req.params.id));
+      const callerUserId = req.sentinelUser.userId;
+      const job = await storage.getScanJob(parseInt(req.params.id));
+      if (!job) return res.status(404).json({ message: "Not found" });
+      if (job.userId !== callerUserId) return res.status(403).json({ message: "Forbidden" });
+      await storage.deleteScanJob(job.id);
       res.json({ message: "Job deleted." });
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });

@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { useSession } from "@/lib/session";
 import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
 import type { ScanJob } from "@shared/schema";
 
 const TOOLS = ["nullscan", "webprobe", "dnsreaper", "phantomtrace", "vaultbreach", "cipheraudit"];
@@ -160,57 +161,55 @@ export default function Scans() {
   const canSchedule = user?.plan === "pro" || user?.plan === "enterprise";
   const userId = user?.id ?? 0;
 
+  // PR #24: list query uses the authenticated session — no ?userId= param needed.
+  // The server derives the caller from the JWT and returns only their own jobs.
   const { data: jobs = [], isLoading } = useQuery<ScanJob[]>({
-    queryKey: ["/api/scans", userId],
-    queryFn: () => fetch(`/api/scans?userId=${userId}`).then(r => r.json()),
+    queryKey: ["/api/scans"],
+    queryFn: () => apiRequest("GET", "/api/scans").then(r => r.json()),
     enabled: !!userId,
     refetchInterval: 8000,
   });
 
+  // PR #24: userId removed from body — server derives it from the JWT.
   const createMutation = useMutation({
     mutationFn: (body: object) =>
-      fetch("/api/scans", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      }).then(async r => {
+      apiRequest("POST", "/api/scans", body).then(async r => {
         const d = await r.json();
         if (!r.ok) throw new Error(d.message);
         return d;
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["/api/scans", userId] });
+      qc.invalidateQueries({ queryKey: ["/api/scans"] });
       setUrl("");
       toast({ title: "Scan job created" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  // PR #24: PATCH sent via apiRequest so the JWT is included in Authorization header.
   const patchMutation = useMutation({
     mutationFn: ({ id, schedule }: { id: number; schedule: string }) =>
-      // VULN: sends raw job.id with no ownership token — server performs no ownership check
-      fetch(`/api/scans/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ schedule }),
-      }).then(r => r.json()),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/scans", userId] }),
+      apiRequest("PATCH", `/api/scans/${id}`, { schedule }).then(r => r.json()),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/scans"] }),
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  // PR #24: DELETE sent via apiRequest so the JWT is included in Authorization header.
   const deleteMutation = useMutation({
     mutationFn: (id: number) =>
-      // VULN: sends raw job.id — server deletes without checking ownership
-      fetch(`/api/scans/${id}`, { method: "DELETE" }).then(r => r.json()),
+      apiRequest("DELETE", `/api/scans/${id}`).then(r => r.json()),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["/api/scans", userId] });
+      qc.invalidateQueries({ queryKey: ["/api/scans"] });
       toast({ title: "Job cancelled" });
     },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
   function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     if (!url.trim()) return;
-    createMutation.mutate({ userId, targetUrl: url, toolSlug: tool, schedule });
+    // PR #24: userId not sent — server reads it from the verified JWT.
+    createMutation.mutate({ targetUrl: url, toolSlug: tool, schedule });
   }
 
   return (
