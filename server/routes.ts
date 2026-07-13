@@ -512,6 +512,22 @@ export async function registerRoutes(
     res.json({ message: "Logged out." });
   });
 
+  // GET /api/auth/me — return the currently authenticated user's profile.
+  // Used by scanners and clients to verify a session token is still valid
+  // and to retrieve the caller's userId, plan, and role without re-logging in.
+  // VULN: returns plan and role from the JWT payload — caller can supply a
+  // forged alg:none token with role:admin to make this return admin profile.
+  app.get("/api/auth/me", requireAuth, async (req: any, res) => {
+    try {
+      const user = await storage.getUser(req.sentinelUser.userId);
+      if (!user) return res.status(404).json({ message: "User not found" });
+      const { password: _, ...safe } = user as any;
+      res.json({ ...safe, role: req.sentinelUser.role ?? "user" });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
   // ── POST-LOGIN REDIRECT ──────────────────────────────────────────────────────
   //
   // GET /api/auth/redirect?next=<url>
