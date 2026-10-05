@@ -7,6 +7,7 @@ import {
 import { useSession } from "@/lib/session";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
 import type { ScanJob } from "@shared/schema";
 
 const TOOLS = ["nullscan", "webprobe", "dnsreaper", "phantomtrace", "vaultbreach", "cipheraudit"];
@@ -161,45 +162,45 @@ export default function Scans() {
   const canSchedule = user?.plan === "pro" || user?.plan === "enterprise";
   const userId = user?.id ?? 0;
 
+  // PR #24: list query uses the authenticated session — no ?userId= param needed.
+  // The server derives the caller from the JWT and returns only their own jobs.
   const { data: jobs = [], isLoading } = useQuery<ScanJob[]>({
-    queryKey: ["/api/scans", userId],
-    queryFn: async () => {
-      const res = await apiRequest("GET", "/api/scans");
-      return res.json();
-    },
+    queryKey: ["/api/scans"],
+    queryFn: () => apiRequest("GET", "/api/scans").then(r => r.json()),
     enabled: !!userId,
     refetchInterval: 8000,
   });
 
+  // PR #24: userId removed from body — server derives it from the JWT.
   const createMutation = useMutation({
-    mutationFn: async (body: { targetUrl: string; toolSlug: string; schedule: string }) => {
-      const res = await apiRequest("POST", "/api/scans", body);
-      return res.json();
-    },
+    mutationFn: (body: object) =>
+      apiRequest("POST", "/api/scans", body).then(async r => {
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.message);
+        return d;
+      }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["/api/scans", userId] });
+      qc.invalidateQueries({ queryKey: ["/api/scans"] });
       setUrl("");
       toast({ title: "Scan job created" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  // PR #24: PATCH sent via apiRequest so the JWT is included in Authorization header.
   const patchMutation = useMutation({
-    mutationFn: async ({ id, schedule }: { id: number; schedule: string }) => {
-      const res = await apiRequest("PATCH", `/api/scans/${id}`, { schedule });
-      return res.json();
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/scans", userId] }),
+    mutationFn: ({ id, schedule }: { id: number; schedule: string }) =>
+      apiRequest("PATCH", `/api/scans/${id}`, { schedule }).then(r => r.json()),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/scans"] }),
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  // PR #24: DELETE sent via apiRequest so the JWT is included in Authorization header.
   const deleteMutation = useMutation({
-    mutationFn: async (id: number) => {
-      const res = await apiRequest("DELETE", `/api/scans/${id}`);
-      return res.json();
-    },
+    mutationFn: (id: number) =>
+      apiRequest("DELETE", `/api/scans/${id}`).then(r => r.json()),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["/api/scans", userId] });
+      qc.invalidateQueries({ queryKey: ["/api/scans"] });
       toast({ title: "Job cancelled" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
@@ -208,6 +209,7 @@ export default function Scans() {
   function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     if (!url.trim()) return;
+    // PR #24: userId not sent — server reads it from the verified JWT.
     createMutation.mutate({ targetUrl: url, toolSlug: tool, schedule });
   }
 

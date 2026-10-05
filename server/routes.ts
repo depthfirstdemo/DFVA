@@ -512,6 +512,22 @@ export async function registerRoutes(
     res.json({ message: "Logged out." });
   });
 
+  // GET /api/auth/me — return the currently authenticated user's profile.
+  // Used by scanners and clients to verify a session token is still valid
+  // and to retrieve the caller's userId, plan, and role without re-logging in.
+  // VULN: returns plan and role from the JWT payload — caller can supply a
+  // forged alg:none token with role:admin to make this return admin profile.
+  app.get("/api/auth/me", requireAuth, async (req: any, res) => {
+    try {
+      const user = await storage.getUser(req.sentinelUser.userId);
+      if (!user) return res.status(404).json({ message: "User not found" });
+      const { password: _, ...safe } = user as any;
+      res.json({ ...safe, role: req.sentinelUser.role ?? "user" });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
   // ── POST-LOGIN REDIRECT ──────────────────────────────────────────────────────
   //
   // GET /api/auth/redirect?next=<url>
@@ -1444,21 +1460,19 @@ export async function registerRoutes(
   // ── SCHEDULED SCAN JOBS ───────────────────────────────────────────────────────
 
   // POST /api/scans
-  // Authenticated users can only create jobs for themselves.
-  // Target validation is handled separately from ownership enforcement here.
+  // PR #24 — a2306bbcd9d0d48201de816609a141bf8a1ef21b
+  // Auth required. Caller identity derived from JWT, not request body.
+  // targetUrl still stored verbatim (Stored SSRF intentional — separate vuln).
   app.post("/api/scans", requireAuth, async (req: any, res) => {
     try {
-      const callerId: number = req.sentinelUser?.userId;
-      const { userId, targetUrl, toolSlug, schedule } = req.body;
+      const callerUserId = req.sentinelUser.userId;
+      const { targetUrl, toolSlug, schedule } = req.body;
       if (!targetUrl || !toolSlug) {
         return res.status(400).json({ message: "targetUrl and toolSlug required" });
       }
 
-      if (userId !== undefined && parseInt(userId) !== callerId) {
-        return res.status(403).json({ message: "Cannot create scan jobs for another user" });
-      }
-
-      const user = await storage.getUser(callerId);
+      // Plan gate checked at creation against the authenticated caller's account
+      const user = await storage.getUser(callerUserId);
       if (!user) return res.status(404).json({ message: "User not found" });
 
       const allowedSchedules =
@@ -1474,7 +1488,7 @@ export async function registerRoutes(
       }
 
       const job = await storage.createScanJob({
-        userId: callerId,
+        userId: callerUserId,
         targetUrl,
         toolSlug,
         schedule: chosenSchedule,
@@ -1486,46 +1500,46 @@ export async function registerRoutes(
   });
 
   // GET /api/scans
-  // Only return the authenticated caller's jobs.
+  // PR #24 — auth required; ignores ?userId= query param.
+  // Returns only the authenticated caller's own jobs.
   app.get("/api/scans", requireAuth, async (req: any, res) => {
-    const callerId: number = req.sentinelUser?.userId;
-    const requestedUserId = parseInt(req.query.userId as string ?? `${callerId}`);
-    if (requestedUserId !== callerId) {
-      return res.status(403).json({ message: "Forbidden" });
-    }
-    const jobs = await storage.getScanJobsByUser(callerId);
+    const callerUserId = req.sentinelUser.userId;
+    const jobs = await storage.getScanJobsByUser(callerUserId);
     res.json(jobs);
   });
 
-  // GET /api/scans/:id — retrieve a single job including lastResult for its owner.
+  // GET /api/scans/:id
+  // PR #24 — ownership check: 403 if job belongs to a different user.
   app.get("/api/scans/:id", requireAuth, async (req: any, res) => {
-    const callerId: number = req.sentinelUser?.userId;
+    const callerUserId = req.sentinelUser.userId;
     const job = await storage.getScanJob(parseInt(req.params.id));
     if (!job) return res.status(404).json({ message: "Not found" });
-    if (job.userId !== callerId) return res.status(403).json({ message: "Forbidden" });
+    if (job.userId !== callerUserId) return res.status(403).json({ message: "Forbidden" });
     res.json(job);
   });
 
   // PATCH /api/scans/:id
-  // Re-check ownership and plan before allowing schedule changes.
+  // PR #24 — ownership check + plan re-check on schedule upgrade.
+  // Free users cannot change schedule to daily or weekly after creation.
   app.patch("/api/scans/:id", requireAuth, async (req: any, res) => {
     try {
-      const callerId: number = req.sentinelUser?.userId;
+      const callerUserId = req.sentinelUser.userId;
       const id = parseInt(req.params.id);
       const { schedule } = req.body;
+
+      const job = await storage.getScanJob(id);
+      if (!job) return res.status(404).json({ message: "Not found" });
+      if (job.userId !== callerUserId) return res.status(403).json({ message: "Forbidden" });
+
       const allowed = ["one-time", "daily", "weekly"];
       if (schedule && !allowed.includes(schedule)) {
         return res.status(400).json({ message: "Invalid schedule value" });
       }
 
-      const existingJob = await storage.getScanJob(id);
-      if (!existingJob) return res.status(404).json({ message: "Not found" });
-      if (existingJob.userId !== callerId) return res.status(403).json({ message: "Forbidden" });
-
-      if (schedule && ["daily", "weekly"].includes(schedule)) {
-        const user = await storage.getUser(callerId);
-        if (!user) return res.status(404).json({ message: "User not found" });
-        if (user.plan !== "pro" && user.plan !== "enterprise") {
+      // Re-check plan when upgrading schedule — free users cannot switch to recurring
+      if (schedule && schedule !== "one-time") {
+        const user = await storage.getUser(callerUserId);
+        if (!user || (user.plan !== "pro" && user.plan !== "enterprise")) {
           return res.status(403).json({
             message: `Schedule "${schedule}" requires Pro or Enterprise plan.`,
           });
@@ -1534,12 +1548,20 @@ export async function registerRoutes(
 
       const updates: any = {};
       if (schedule) updates.schedule = schedule;
-      const job = await storage.updateScanJob(id, updates);
-      res.json(job);
+      const updated = await storage.updateScanJob(id, updates);
+      res.json(updated);
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
 
   // DELETE /api/scans/:id
+  // PR #24 — auth required; ownership check before deletion.
+  app.delete("/api/scans/:id", requireAuth, async (req: any, res) => {
+    try {
+      const callerUserId = req.sentinelUser.userId;
+      const job = await storage.getScanJob(parseInt(req.params.id));
+      if (!job) return res.status(404).json({ message: "Not found" });
+      if (job.userId !== callerUserId) return res.status(403).json({ message: "Forbidden" });
+      await storage.deleteScanJob(job.id);
   // Only the owning user can delete a scheduled scan job.
   app.delete("/api/scans/:id", requireAuth, async (req: any, res) => {
     try {
