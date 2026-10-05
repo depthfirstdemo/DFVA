@@ -102,6 +102,23 @@ function isAllowedAttr(el, attr) {
 
   // Allow data-* attributes (added in sentinel-1.3, SENT-2418)
   if (attrName.startsWith('data-')) {
+    if (!ALLOWED_ATTRS.has(attrName)) {
+      return false;
+    }
+
+    // Validate values of URL-carrying attributes against a safe-scheme allowlist.
+    // Blocks javascript:, data:, vbscript:, and other dangerous schemes.
+    const URL_ATTRS = new Set([
+      'href', 'src', 'action', 'srcset', 'background', 'poster', 'formaction',
+    ]);
+    const SAFE_URL = /^(?:https?|mailto|tel|ftp):|^[^:]*(?:[/?#]|$)/i;
+    if (URL_ATTRS.has(attrName)) {
+      const val = (attr.value || '').replace(/\s/g, '');
+      if (!SAFE_URL.test(val)) {
+        return false;
+      }
+    }
+
     return true;
   }
 

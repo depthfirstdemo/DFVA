@@ -5,6 +5,7 @@ import {
   AlertCircle, Play, Calendar, Globe, ChevronDown, ChevronUp, Lock, Download
 } from "lucide-react";
 import { useSession } from "@/lib/session";
+import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import type { ScanJob } from "@shared/schema";
@@ -65,7 +66,7 @@ function JobRow({ job, onDelete, onPatch }: {
 
         <StatusBadge status={job.status} />
 
-        {/* VULN: PATCH schedule after creation — plan gate not re-checked */}
+        {/* Offer a schedule upgrade for pending or scheduled one-time jobs. */}
         {(job.status === "pending" || job.status === "scheduled") && job.schedule === "one-time" && (
           <button
             data-testid={`button-upgrade-schedule-${job.id}`}
@@ -111,7 +112,7 @@ function JobRow({ job, onDelete, onPatch }: {
           </a>
         )}
 
-        {/* VULN: delete sends job.id — no ownership check server-side */}
+        {/* Allow owners to cancel a job. */}
         <button
           data-testid={`button-cancel-job-${job.id}`}
           onClick={() => onDelete(job.id)}

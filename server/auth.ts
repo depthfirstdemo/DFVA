@@ -47,15 +47,14 @@ export function verifyToken(token: string): SentinelClaims {
   const header  = parseB64url(parts[0]) as { alg: string };
   const payload = parseB64url(parts[1]) as SentinelClaims;
 
-  if (header.alg === "HS256") {
-    const expected = createHmac("sha256", SECRET)
-      .update(`${parts[0]}.${parts[1]}`)
-      .digest("base64url");
-    if (expected !== parts[2]) throw new Error("Signature verification failed");
-    return payload;
+  if (header.alg !== "HS256") {
+    throw new Error("Unsupported algorithm — only HS256 is accepted");
   }
 
-  // VULN: all other algorithms — including alg:none — accepted with NO signature check.
+  const expected = createHmac("sha256", SECRET)
+    .update(`${parts[0]}.${parts[1]}`)
+    .digest("base64url");
+  if (expected !== parts[2]) throw new Error("Signature verification failed");
   return payload;
 }
 

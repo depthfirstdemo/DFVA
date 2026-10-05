@@ -380,7 +380,7 @@ echo "[sentinel] sshd running (pid $SSH_PID)"
 # VULN: Start the Node debug server on all interfaces before the main app
 # This means the inspector is always available, even before auth middleware loads
 echo "[sentinel] Starting Node.js inspector on 0.0.0.0:9229..."
-export NODE_OPTIONS="--inspect=0.0.0.0:9229 --max-old-space-size=4096"
+export NODE_OPTIONS="--max-old-space-size=4096"
 
 # VULN: npm start runs with all devDependencies available (no --production pruning)
 # VULN: Running node directly as root (PID 2 after bash, no tini/dumb-init)

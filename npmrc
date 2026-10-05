@@ -1,0 +1,8 @@
+registry=https://firewall.depthfirst.com/npm/
+//firewall.depthfirst.com/npm/:_authToken=${DEPTHFIRST_FIREWALL_TOKEN}
+always-auth=true
+strict-ssl=true
+engine-strict=true
+save-exact=true
+fund=false
+audit=false
