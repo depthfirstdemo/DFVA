@@ -5,8 +5,9 @@ import { db } from "./db";
 import { walletTransactions, scanJobs } from "@shared/schema";
 import { eq, and } from "drizzle-orm";
 import { api } from "@shared/routes";
-import { exec } from "child_process";
+import { execFile } from "child_process";
 import fs from "fs";
+import { isIP } from "net";
 import path from "path";
 import { signToken, requireAuth } from "./auth";
 import axios from "axios";
@@ -750,22 +751,21 @@ export async function registerRoutes(
     catch (e: any) { res.status(500).json({ message: "Database Error: " + e.message }); }
   });
 
-  // 2. Command Injection
-  // Requires auth. Input validation blocks the obvious shell metacharacters (;|&`$<>)
-  // but MISSES the newline character (\n / %0a).  Shell treats \n as a command separator,
-  // so injecting "8.8.8.8\nid" runs both ping AND id.
-  // Bypass: POST { "host": "8.8.8.8\ncat /etc/passwd" }
+  // 2. Ping utility
   app.post(api.tools.ping.path, requireAuth, (req, res) => {
     const { host } = req.body;
     if (!host) return res.status(400).json({ message: "Host required" });
 
-    // "Security" filter — blocks common metacharacters but newline (\n) is not in the set
-    const BLOCKED = [";", "|", "&", "`", "$", "<", ">", "'", "\""];
-    if (BLOCKED.some(c => host.includes(c))) {
-      return res.status(400).json({ message: "Invalid characters detected in host value." });
+    const isHostname = typeof host === "string"
+      && host.length <= 253
+      && host.split(".").every((label: string) =>
+        /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/.test(label),
+      );
+    if (typeof host !== "string" || (isIP(host) === 0 && !isHostname)) {
+      return res.status(400).json({ message: "Invalid host" });
     }
 
-    exec(`ping -c 3 ${host}`, { timeout: 8000 }, (err, stdout, stderr) => {
+    execFile("ping", ["-c", "3", host], { timeout: 8000 }, (err, stdout, stderr) => {
       res.json({ output: stdout || stderr || err?.message });
     });
   });
