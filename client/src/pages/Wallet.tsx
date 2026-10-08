@@ -6,6 +6,8 @@ import {
   AlertCircle, CheckCircle2, Clock, XCircle, Zap
 } from "lucide-react";
 import { useSession } from "@/lib/session";
+import { apiRequest } from "@/lib/queryClient";
+import { api } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
 import type { WalletTransaction, Ticket as TicketType, User } from "@shared/schema";
 
@@ -113,16 +115,8 @@ export default function Wallet() {
 
   // VULN: downgrade calls processDowngrade — two non-atomic writes (C3)
   const downgradeMutation = useMutation({
-    mutationFn: (targetPlan: string) =>
-      fetch("/api/billing/downgrade", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, targetPlan }),
-      }).then(async r => {
-        const d = await r.json();
-        if (!r.ok) throw new Error(d.message);
-        return d;
-      }),
+    mutationFn: async (targetPlan: string) =>
+      (await apiRequest("POST", api.billing.downgrade.path, { targetPlan })).json(),
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ["/api/billing", userId] });
       qc.invalidateQueries({ queryKey: ["/api/wallet/transactions", userId] });
