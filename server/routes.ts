@@ -1661,12 +1661,30 @@ export async function registerRoutes(
   });
 
   // PATCH /api/workspaces/:id/members/:memberId — change member role.
-  // VULN #50: no role check — any workspace member (even Viewer) can promote themselves to Admin.
-  app.patch("/api/workspaces/:id/members/:memberId", async (req, res) => {
+  app.patch("/api/workspaces/:id/members/:memberId", requireAuth, async (req, res) => {
     try {
-      const { role } = req.body;
-      if (!role) return res.status(400).json({ message: "role required" });
-      const member = await storage.updateMemberRole(parseInt(req.params.memberId), role);
+      const workspaceId = Number(req.params.id);
+      const memberId = Number(req.params.memberId);
+      const role = req.body?.role;
+      if (!Number.isInteger(workspaceId) || workspaceId <= 0 ||
+          !Number.isInteger(memberId) || memberId <= 0) {
+        return res.status(400).json({ message: "Invalid workspace or member ID" });
+      }
+      if (typeof role !== "string" || !["viewer", "analyst", "admin"].includes(role)) {
+        return res.status(400).json({ message: "role must be viewer, analyst, or admin" });
+      }
+
+      const members = await storage.getWorkspaceMembers(workspaceId);
+      const callerIsAdmin = members.some(
+        (member) => member.userId === req.sentinelUser.userId && member.role === "admin",
+      );
+      if (!callerIsAdmin) return res.status(403).json({ message: "Forbidden" });
+      if (!members.some((member) => member.id === memberId)) {
+        return res.status(404).json({ message: "Member not found" });
+      }
+
+      const member = await storage.updateMemberRole(memberId, workspaceId, role);
+      if (!member) return res.status(404).json({ message: "Member not found" });
       res.json(member);
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
