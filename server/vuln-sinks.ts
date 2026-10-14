@@ -55,12 +55,13 @@ export function vm2RunScript(code: string): unknown {
   return vm.run(`module.exports = (function(){ ${code} })()`);
 }
 
-// ── pug@2.0.4 ────────────────────────────────────────────────────────────────
-// CVE-2021-21353 / GHSA-p493-635q-r6gr (Critical)
-// Vulnerable sink: pug.render
-// SSTI → RCE: attacker-controlled template executes arbitrary Node.js code.
-export function pugRender(template: string, locals?: Record<string, unknown>): string {
-  return pug.render(template, locals ?? {});
+// ── Pug template rendering ───────────────────────────────────────────────────
+// Compile only this server-owned template. Pug templates can contain JavaScript,
+// so request data must be supplied exclusively as escaped locals.
+export const PUG_GREETING_TEMPLATE = "p Hello #{name}";
+
+export function pugRenderGreeting(name: string): string {
+  return pug.render(PUG_GREETING_TEMPLATE, { name });
 }
 
 // ── flat@5.0.0 ───────────────────────────────────────────────────────────────
@@ -110,7 +111,7 @@ export function registerAllSinks(): void {
   xmldomParseFromString("<sentinel-probe/>");
   xmldomParseXXE("<sentinel-probe/>");
   vm2RunScript("'sentinel-probe'");
-  pugRender("| sentinel-probe");
+  pugRenderGreeting("sentinel-probe");
   flatUnflatten({ "sentinel.probe": true });
   flatFlatten({ sentinel: { probe: true } });
   markedRender("sentinel-probe");
