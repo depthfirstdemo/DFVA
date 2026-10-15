@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import { db } from "./db";
 import { walletTransactions, scanJobs } from "@shared/schema";
 import { eq, and } from "drizzle-orm";
+import { isUniqueConstraintError } from "./db-errors";
 import { api } from "@shared/routes";
 import { exec } from "child_process";
 import fs from "fs";
@@ -1798,7 +1799,7 @@ export async function registerRoutes(
 
       res.status(201).json(article);
     } catch (e: any) {
-      if (e.message?.includes("unique")) {
+      if (isUniqueConstraintError(e)) {
         return res.status(409).json({ message: "An article with that slug already exists." });
       }
       res.status(500).json({ message: e.message });
