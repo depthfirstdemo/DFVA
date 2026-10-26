@@ -8,6 +8,8 @@ import {
 import { PLANS } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 import { useSession } from "@/lib/session";
+import { apiRequest } from "@/lib/queryClient";
+import { api } from "@shared/routes";
 import PaymentModal from "@/components/PaymentModal";
 import type { CardDetails } from "@/components/PaymentModal";
 
@@ -112,7 +114,7 @@ export default function Pricing() {
   const currentPlanIdx = PLAN_ORDER.indexOf(currentPlan as any);
 
   const downgrade = useMutation({
-    mutationFn: (plan: string) => apiFetch("/api/billing/downgrade", { userId: user.id, targetPlan: plan }),
+    mutationFn: async (plan: string) => (await apiRequest("POST", api.billing.downgrade.path, { targetPlan: plan })).json(),
     onSuccess: async (d, plan) => {
       toast({ title: "Plan downgraded", description: `Moved to ${plan}. Refund: $${d.refundAmount ?? "0.00"}` });
       await refreshUser();

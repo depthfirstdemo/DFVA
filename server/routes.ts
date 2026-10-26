@@ -302,10 +302,25 @@ export async function registerRoutes(
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
 
-  app.post(api.billing.downgrade.path, async (req, res) => {
+  app.post(api.billing.downgrade.path, requireAuth, async (req, res) => {
     try {
-      const { userId, targetPlan } = req.body;
-      const result = await processDowngrade(userId, targetPlan as PlanKey);
+      const parsed = api.billing.downgrade.input.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: "Invalid downgrade request" });
+
+      const userId = req.sentinelUser.userId;
+      const { userId: requestedUserId, targetPlan } = parsed.data;
+      if (requestedUserId !== undefined && requestedUserId !== userId) {
+        return res.status(403).json({ message: "Cannot change another user's plan" });
+      }
+
+      const user = await storage.getUser(userId);
+      if (!user) return res.status(404).json({ message: "User not found" });
+      const currentPlan = user.plan as PlanKey;
+      if (!Object.prototype.hasOwnProperty.call(PLANS, currentPlan) || PLANS[targetPlan].price >= PLANS[currentPlan].price) {
+        return res.status(400).json({ message: "Target plan must be lower than current plan" });
+      }
+
+      const result = await processDowngrade(userId, targetPlan);
       res.json({ message: `Downgraded to ${targetPlan}`, refundAmount: result.refundAmount, walletBalance: result.newBalance });
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });

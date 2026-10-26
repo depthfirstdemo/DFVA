@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { CreditCard, Zap, ArrowUp, ArrowDown, Wallet, ChevronRight, Loader2 } from "lucide-react";
 import { api } from "@shared/routes";
+import { apiRequest } from "@/lib/queryClient";
 import { PLANS } from "@shared/schema";
 
 const PLAN_ORDER = ["free", "pro", "enterprise"] as const;
@@ -78,11 +79,7 @@ export default function Billing() {
 
   const downgrade = useMutation({
     mutationFn: async (targetPlan: string) => {
-      const res = await fetch(api.billing.downgrade.path, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, targetPlan }),
-      });
+      const res = await apiRequest("POST", api.billing.downgrade.path, { userId, targetPlan });
       return handleResponse(res);
     },
     onSuccess: (data) => {

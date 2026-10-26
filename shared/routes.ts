@@ -113,7 +113,7 @@ export const api = {
     downgrade: {
       method: 'POST' as const,
       path: '/api/subscription/downgrade' as const,
-      input: z.object({ userId: z.number(), targetPlan: z.string() }),
+      input: z.object({ userId: z.number().int().optional(), targetPlan: z.enum(['free', 'pro', 'enterprise']) }),
       responses: {
         200: z.object({ message: z.string(), refundAmount: z.number(), walletBalance: z.string() }),
         500: errorSchemas.internal,
