@@ -1,4 +1,4 @@
-import { pgTable, serial, text, timestamp, integer, boolean, decimal } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, timestamp, integer, boolean, decimal, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -176,6 +176,17 @@ export const workspaceMembers = pgTable("workspace_members", {
   joinedAt: timestamp("joined_at").defaultNow(),
 });
 
+// Scans are visible in a workspace only when their owner explicitly shares them.
+export const workspaceScanShares = pgTable("workspace_scan_shares", {
+  id: serial("id").primaryKey(),
+  workspaceId: integer("workspace_id").references(() => workspaces.id, { onDelete: "cascade" }).notNull(),
+  scanJobId: integer("scan_job_id").references(() => scanJobs.id, { onDelete: "cascade" }).notNull(),
+  sharedByUserId: integer("shared_by_user_id").references(() => users.id).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("workspace_scan_shares_workspace_scan_idx").on(table.workspaceId, table.scanJobId),
+]);
+
 // VULN: token generated with Math.random() — predictable (same class as #13).
 // VULN: role stored here AND read from URL param on accept — param wins, enabling escalation.
 export const workspaceInvitations = pgTable("workspace_invitations", {
@@ -193,6 +204,7 @@ export const workspaceInvitations = pgTable("workspace_invitations", {
 
 export type Workspace = typeof workspaces.$inferSelect;
 export type WorkspaceMember = typeof workspaceMembers.$inferSelect;
+export type WorkspaceScanShare = typeof workspaceScanShares.$inferSelect;
 export type WorkspaceInvitation = typeof workspaceInvitations.$inferSelect;
 export const insertWorkspaceSchema = createInsertSchema(workspaces).omit({ id: true, createdAt: true });
 export const insertWorkspaceMemberSchema = createInsertSchema(workspaceMembers).omit({ id: true, joinedAt: true });
