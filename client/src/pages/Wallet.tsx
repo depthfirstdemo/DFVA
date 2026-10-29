@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { useSession } from "@/lib/session";
 import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
 import type { WalletTransaction, Ticket as TicketType, User } from "@shared/schema";
 
 const TX_ICON: Record<string, React.ElementType> = {
@@ -66,7 +67,7 @@ export default function Wallet() {
 
   const { data: tickets = [] } = useQuery<TicketType[]>({
     queryKey: ["/api/tickets", userId],
-    queryFn: () => fetch(`/api/tickets?userId=${userId}`).then(r => r.json()),
+    queryFn: () => apiRequest("GET", `/api/tickets?userId=${userId}`).then(r => r.json()),
     enabled: !!userId,
   });
 

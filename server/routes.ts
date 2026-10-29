@@ -667,10 +667,15 @@ export async function registerRoutes(
 
   // ── TICKETS ───────────────────────────────────────────────────────────────────
 
-  // GET /api/tickets?userId= — IDOR: no auth, enumerate any user's tickets
-  app.get("/api/tickets", async (req, res) => {
-    const userId = parseInt(req.query.userId as string ?? "0");
-    if (!userId) return res.status(400).json({ message: "userId required" });
+  // GET /api/tickets?userId= — authenticated users can list only their own tickets
+  app.get("/api/tickets", requireAuth, async (req: any, res) => {
+    const userId = Number(req.query.userId);
+    if (!Number.isSafeInteger(userId) || userId <= 0) {
+      return res.status(400).json({ message: "valid userId required" });
+    }
+    if (userId !== req.sentinelUser.userId) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
     res.json(await storage.getTicketsByUser(userId));
   });
 
