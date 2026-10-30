@@ -1597,11 +1597,20 @@ export async function registerRoutes(
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
 
-  // VULN #46 (GET /api/workspaces/:id): No ownership check — read any workspace by ID (IDOR).
-  app.get("/api/workspaces/:id", async (req, res) => {
+  // Workspace details are visible only to the owner and workspace members.
+  app.get("/api/workspaces/:id", requireAuth, async (req: any, res) => {
     try {
       const ws = await storage.getWorkspace(parseInt(req.params.id));
       if (!ws) return res.status(404).json({ message: "Workspace not found" });
+
+      const callerUserId = req.sentinelUser.userId;
+      if (ws.ownerId !== callerUserId) {
+        const members = await storage.getWorkspaceMembers(ws.id);
+        if (!members.some(member => member.userId === callerUserId)) {
+          return res.status(403).json({ message: "Forbidden" });
+        }
+      }
+
       res.json(ws);
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
