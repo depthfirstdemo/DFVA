@@ -31,6 +31,16 @@ export async function applyCreditsToOrder(userId: number, orderAmount: number): 
 
 // VULNERABLE: credits the wallet BEFORE charging payment — if charge errors, wallet is credited and no money collected
 export async function finalizeUpgrade(userId: number, targetPlan: PlanKey, paymentMethod: string): Promise<{ newBalance: string; plan: string }> {
+  // The built-in card flow is only a local simulator; require an explicit local
+  // opt-in so it can never grant paid entitlements in a deployed environment.
+  const simulatorEnabled = process.env.NODE_ENV === "development"
+    && process.env.ENABLE_SIMULATED_PAYMENTS === "true";
+  if (!simulatorEnabled) {
+    const error: any = new Error("Subscription payments are unavailable until payment verification is configured.");
+    error.statusCode = 503;
+    throw error;
+  }
+
   const wallet = await storage.getUserWallet(userId);
   const currentPlan = wallet.plan as PlanKey;
 
