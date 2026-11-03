@@ -118,7 +118,8 @@
     "drizzle-kit": {
       "@esbuild-kit/esm-loader": "npm:tsx@^4.20.4"
     },
-    "postcss-selector-parser": "7.1.6"
+    "postcss-selector-parser": "7.1.6",
+    "path-to-regexp": "8.4.1"
   },
   "optionalDependencies": {
     "bufferutil": "^4.0.8"
