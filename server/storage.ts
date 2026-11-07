@@ -72,7 +72,7 @@ export interface IStorage {
   removeWorkspaceMember(memberId: number): Promise<void>;
   createInvitation(data: { workspaceId: number; email: string; role: string; token: string }): Promise<WorkspaceInvitation>;
   getInvitationByToken(token: string): Promise<WorkspaceInvitation | undefined>;
-  acceptInvitation(token: string, userId: number, role: string): Promise<WorkspaceInvitation>;
+  acceptInvitation(token: string, userId: number): Promise<WorkspaceInvitation>;
   getWorkspaceInvitations(workspaceId: number): Promise<WorkspaceInvitation[]>;
   // KB Articles — VULN: body never sanitized server-side; stored and returned verbatim
   getKbArticles(): Promise<KbArticle[]>;
@@ -415,12 +415,11 @@ export class DatabaseStorage implements IStorage {
     return inv;
   }
 
-  // VULN: role param overrides the role stored in the invitation — passed directly from URL query param
-  async acceptInvitation(token: string, userId: number, role: string): Promise<WorkspaceInvitation> {
+  async acceptInvitation(token: string, userId: number): Promise<WorkspaceInvitation> {
     const inv = await this.getInvitationByToken(token);
     if (!inv) throw new Error("Invitation not found");
     if (inv.acceptedAt) throw new Error("Invitation already accepted");
-    await this.addWorkspaceMember({ workspaceId: inv.workspaceId, userId, role });
+    await this.addWorkspaceMember({ workspaceId: inv.workspaceId, userId, role: inv.role });
     const [updated] = await db.update(workspaceInvitations)
       .set({ acceptedAt: new Date(), acceptedByUserId: userId })
       .where(eq(workspaceInvitations.token, token)).returning();

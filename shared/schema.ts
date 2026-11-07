@@ -177,12 +177,11 @@ export const workspaceMembers = pgTable("workspace_members", {
 });
 
 // VULN: token generated with Math.random() — predictable (same class as #13).
-// VULN: role stored here AND read from URL param on accept — param wins, enabling escalation.
 export const workspaceInvitations = pgTable("workspace_invitations", {
   id: serial("id").primaryKey(),
   workspaceId: integer("workspace_id").references(() => workspaces.id).notNull(),
   email: text("email").notNull(),
-  // Intended role set by inviter — but POST /api/invitations/:token/accept reads ?role= from URL instead
+  // The role assigned by the inviter and enforced when the invitation is accepted.
   role: text("role").notNull().default("viewer"),
   // VULN: Math.random().toString(36) token — 11 chars, ~3.6 trillion combos but brute-forceable
   token: text("token").notNull().unique(),
