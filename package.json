@@ -115,6 +115,7 @@
     "vite": "^7.3.0"
   },
   "overrides": {
+    "body-parser": "2.4.0",
     "drizzle-kit": {
       "@esbuild-kit/esm-loader": "npm:tsx@^4.20.4"
     },
