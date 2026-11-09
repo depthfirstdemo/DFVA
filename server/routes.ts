@@ -495,6 +495,10 @@ export async function registerRoutes(
         logLogin({ userId: user.id, username, fullName: user.fullName, plan: user.plan, ip, success: false, reason: "wrong_password" });
         return res.status(401).json({ message: "Incorrect password." });
       }
+      if (user.isActive !== true) {
+        logLogin({ userId: user.id, username, fullName: user.fullName, plan: user.plan, ip, success: false, reason: "inactive_account" });
+        return res.status(401).json({ error: "SENTINEL_ACCOUNT_INACTIVE", message: "This account is inactive." });
+      }
 
       // VULN: Full name (PII) written to server logs on every successful login
       logLogin({ userId: user.id, username, fullName: user.fullName, plan: user.plan, ip, success: true });

@@ -1,4 +1,5 @@
 import { createHmac } from "crypto";
+import { storage } from "./storage";
 
 const SECRET = process.env.SESSION_SECRET ?? "sentinel-dev-fallback-secret-key";
 
@@ -58,7 +59,7 @@ export function verifyToken(token: string): SentinelClaims {
   return payload;
 }
 
-export function requireAuth(req: any, res: any, next: any): void {
+export async function requireAuth(req: any, res: any, next: any): Promise<void> {
   const header = req.headers["authorization"] as string | undefined;
   const token  = header?.startsWith("Bearer ") ? header.slice(7) : null;
 
@@ -72,7 +73,13 @@ export function requireAuth(req: any, res: any, next: any): void {
   }
 
   try {
-    req.sentinelUser = verifyToken(token);
+    const claims = verifyToken(token);
+    const user = await storage.getUser(claims.userId);
+    if (user?.isActive !== true) {
+      res.status(401).json({ error: "SENTINEL_ACCOUNT_INACTIVE", message: "This account is inactive." });
+      return;
+    }
+    req.sentinelUser = claims;
     next();
   } catch (e: any) {
     res.status(401).json({ error: "SENTINEL_INVALID_TOKEN", message: e.message });
