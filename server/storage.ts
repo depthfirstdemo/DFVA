@@ -10,6 +10,12 @@ import {
 } from "@shared/schema";
 import { eq, sql, ilike, lte, and, inArray, desc } from "drizzle-orm";
 
+export type CouponRedemptionResult =
+  | { status: "redeemed"; user: User; coupon: Coupon; creditAmount: number }
+  | { status: "already-redeemed"; coupon: Coupon }
+  | { status: "limit-reached"; coupon: Coupon }
+  | { status: "not-found" };
+
 export interface IStorage {
   getUser(id: number): Promise<User | undefined>;
   getAllUsers(): Promise<User[]>;
@@ -82,11 +88,7 @@ export interface IStorage {
   // Coupons
   getCouponByCode(code: string): Promise<Coupon | undefined>;
   createCoupon(data: { code: string; type: string; value: string; maxUses?: number | null }): Promise<Coupon>;
-  // VULN: increments the GLOBAL counter only — no per-user tracking.
-  //       The calling route never records which userId redeemed this code,
-  //       so the same user can redeem the same code as many times as they
-  //       want until the global maxUses ceiling is reached.
-  incrementCouponUses(id: number): Promise<void>;
+  redeemCoupon(userId: number, code: string): Promise<CouponRedemptionResult>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -479,17 +481,61 @@ export class DatabaseStorage implements IStorage {
     return row;
   }
 
-  // VULN: increments the global timesUsed counter only.
-  //   No coupon_redemptions table exists.  No (userId, couponId) uniqueness is
-  //   enforced anywhere.  The only guard in the calling route is:
-  //     if (maxUses !== null && timesUsed >= maxUses) → reject
-  //   That guard operates on the TOTAL count across ALL users, not per-user.
-  //   A single user calling the redeem endpoint 500 times exhausts a code with
-  //   maxUses=500 — consuming the entire global budget alone.
-  async incrementCouponUses(id: number): Promise<void> {
-    await db.update(coupons)
-      .set({ timesUsed: sql`${coupons.timesUsed} + 1` })
-      .where(eq(coupons.id, id));
+  async redeemCoupon(userId: number, code: string): Promise<CouponRedemptionResult> {
+    return db.transaction<CouponRedemptionResult>(async (tx) => {
+      const [coupon] = await tx.select().from(coupons).where(eq(coupons.code, code));
+      if (!coupon) return { status: "not-found" };
+
+      // Serialize redemptions for this user/coupon pair. The transaction ledger
+      // is the durable redemption record, including for redemptions made before
+      // this check was introduced.
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(${userId}::integer, ${coupon.id}::integer)`);
+
+      const description = `Promo code redeemed: ${coupon.code}`;
+      const [priorRedemption] = await tx
+        .select({ id: walletTransactions.id })
+        .from(walletTransactions)
+        .where(and(
+          eq(walletTransactions.userId, userId),
+          eq(walletTransactions.type, "credit"),
+          eq(walletTransactions.description, description),
+        ))
+        .limit(1);
+
+      if (priorRedemption) return { status: "already-redeemed", coupon };
+
+      // Claim one globally available use atomically so concurrent users cannot
+      // exceed maxUses.
+      const [claimedCoupon] = await tx
+        .update(coupons)
+        .set({ timesUsed: sql`COALESCE(${coupons.timesUsed}, 0) + 1` })
+        .where(and(
+          eq(coupons.id, coupon.id),
+          sql`(${coupons.maxUses} IS NULL OR COALESCE(${coupons.timesUsed}, 0) < ${coupons.maxUses})`,
+        ))
+        .returning();
+
+      if (!claimedCoupon) return { status: "limit-reached", coupon };
+
+      const creditAmount = Number(coupon.value);
+      if (!Number.isFinite(creditAmount)) throw new Error("Coupon has an invalid value");
+
+      const [user] = await tx
+        .update(users)
+        .set({ walletBalance: sql`${users.walletBalance} + ${creditAmount}` })
+        .where(eq(users.id, userId))
+        .returning();
+      if (!user) throw new Error("User not found");
+
+      await tx.insert(walletTransactions).values({
+        userId,
+        amount: creditAmount.toFixed(2),
+        type: "credit",
+        description,
+      });
+
+      return { status: "redeemed", user, coupon: claimedCoupon, creditAmount };
+    });
   }
 }
 
