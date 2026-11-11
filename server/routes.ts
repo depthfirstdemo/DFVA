@@ -1691,12 +1691,20 @@ export async function registerRoutes(
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
 
-  // GET /api/workspaces/:id/invitations — list pending invitations.
-  // VULN: IDOR — any caller can list invitations (and extract tokens) for any workspace.
-  app.get("/api/workspaces/:id/invitations", async (req, res) => {
+  // GET /api/workspaces/:id/invitations — list invitations for workspace members.
+  app.get("/api/workspaces/:id/invitations", requireAuth, async (req, res) => {
     try {
-      const invs = await storage.getWorkspaceInvitations(parseInt(req.params.id));
-      res.json(invs); // VULN: tokens returned in plaintext — enables harvest + replay
+      const workspaceId = Number(req.params.id);
+      if (!Number.isSafeInteger(workspaceId) || workspaceId < 1) {
+        return res.status(400).json({ message: "Invalid workspace ID" });
+      }
+
+      const members = await storage.getWorkspaceMembers(workspaceId);
+      const callerIsMember = members.some((member) => member.userId === req.sentinelUser.userId);
+      if (!callerIsMember) return res.status(403).json({ message: "Forbidden" });
+
+      const invs = await storage.getWorkspaceInvitations(workspaceId);
+      res.json(invs);
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
 
