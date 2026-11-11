@@ -57,7 +57,7 @@ export default function Workspaces() {
 
   const { data: invitations = [] } = useQuery<Invitation[]>({
     queryKey: ["/api/workspaces", selectedWs?.id, "invitations"],
-    queryFn: () => fetch(`/api/workspaces/${selectedWs!.id}/invitations`).then(r => r.json()),
+    queryFn: () => apiRequest("GET", `/api/workspaces/${selectedWs!.id}/invitations`).then(r => r.json()),
     enabled: !!selectedWs,
   });
 
