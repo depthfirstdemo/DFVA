@@ -1031,13 +1031,22 @@ export async function registerRoutes(
     }
   });
 
-  // 5. eval() Deserialization — RCE via direct eval()
-  // Requires auth. No additional validation — any JS expression in `data` executes.
-  app.post(api.tools.deserialize.path, requireAuth, (req, res) => {
-    const { data } = req.body;
-    if (!data) return res.status(400).json({ message: "data required" });
-    try { res.json({ result: eval("(" + data + ")") }); }
-    catch (e: any) { res.status(500).json({ message: "Eval Error: " + e.message }); }
+  // 5. Admin configuration — accept data-only JSON from administrators.
+  app.post(api.tools.deserialize.path, requireAuth, (req: any, res) => {
+    if (req.sentinelUser?.role !== "admin") {
+      return res.status(403).json({ message: "Forbidden: admin role required" });
+    }
+
+    const { data } = req.body ?? {};
+    if (typeof data !== "string" || data.length === 0) {
+      return res.status(400).json({ message: "data required" });
+    }
+
+    try {
+      return res.json({ result: JSON.parse(data) });
+    } catch {
+      return res.status(400).json({ message: "Invalid JSON" });
+    }
   });
 
   // 6. Broken Auth — header bypass
