@@ -62,9 +62,13 @@ export default function Billing() {
 
   const upgrade = useMutation({
     mutationFn: async (targetPlan: string) => {
+      const token = localStorage.getItem("sentinel_token");
       const res = await fetch(api.billing.upgrade.path, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({ userId, targetPlan, paymentMethod }),
       });
       return handleResponse(res);

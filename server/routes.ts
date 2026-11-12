@@ -294,12 +294,19 @@ export async function registerRoutes(
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
 
-  app.post(api.billing.upgrade.path, async (req, res) => {
+  app.post(api.billing.upgrade.path, requireAuth, async (req: any, res) => {
     try {
-      const { userId, targetPlan, paymentMethod } = req.body;
+      const { userId: requestedUserId, targetPlan, paymentMethod } = req.body;
+      const userId = req.sentinelUser.userId;
+      if (Number(requestedUserId) !== userId) {
+        return res.status(403).json({ message: "You may only change your own subscription." });
+      }
+      if (!Object.prototype.hasOwnProperty.call(PLANS, targetPlan)) {
+        return res.status(400).json({ message: "Invalid target plan." });
+      }
       const result = await finalizeUpgrade(userId, targetPlan as PlanKey, paymentMethod);
       res.json({ message: `Upgraded to ${targetPlan}`, plan: result.plan, walletBalance: result.newBalance });
-    } catch (e: any) { res.status(500).json({ message: e.message }); }
+    } catch (e: any) { res.status(e.statusCode ?? 500).json({ message: e.message }); }
   });
 
   app.post(api.billing.downgrade.path, async (req, res) => {
@@ -695,13 +702,21 @@ export async function registerRoutes(
   // ── PAYMENT ENDPOINT ─────────────────────────────────────────────────────────
   // VULN #22: PAN data (full card number + CVV) written to server logs.
   // Any log aggregator, SIEM, or /var/log reader will capture raw card data.
-  app.post("/api/subscription/pay", async (req, res) => {
+  app.post("/api/subscription/pay", requireAuth, async (req: any, res) => {
     try {
-      const { userId, targetPlan, card } = req.body;
-      if (!userId || !targetPlan || !card) return res.status(400).json({ message: "userId, targetPlan, and card required" });
+      const { userId: requestedUserId, targetPlan, card } = req.body;
+      const userId = req.sentinelUser.userId;
+      if (Number(requestedUserId) !== userId) {
+        return res.status(403).json({ message: "You may only change your own subscription." });
+      }
+      if (!targetPlan || !card) return res.status(400).json({ message: "targetPlan and card required" });
+      if (!Object.prototype.hasOwnProperty.call(PLANS, targetPlan)) {
+        return res.status(400).json({ message: "Invalid target plan." });
+      }
 
       const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0] ?? req.socket.remoteAddress ?? "unknown";
-      const userRecord = await storage.getUser(parseInt(userId));
+      const userRecord = await storage.getUser(userId);
+      if (!userRecord) return res.status(404).json({ message: "User not found" });
 
       // VULN: Full PAN + CVV logged — violates PCI-DSS requirement 3.2
       console.log(`[payment] uid=${userId} plan=${targetPlan} card=${(card.number ?? '').replace(/\s/g, '')} exp=${card.expiry} cvv=${card.cvv} name="${card.name}"`);
@@ -712,14 +727,14 @@ export async function registerRoutes(
         return res.status(402).json({ message: "Your card was declined. Please try a different payment method." });
       }
 
-      const fromPlan = userRecord?.plan ?? "unknown";
+      const fromPlan = userRecord.plan ?? "unknown";
       const result = await finalizeUpgrade(userId, targetPlan as PlanKey, cardNum);
 
       // VULN: Full name (PII) written to payment audit log
-      logPayment({ userId: parseInt(userId), fullName: userRecord?.fullName ?? null, fromPlan, toPlan: result.plan, amount: parseFloat(result.walletBalance ?? "0"), ip });
+      logPayment({ userId, fullName: userRecord.fullName ?? null, fromPlan, toPlan: result.plan, amount: parseFloat(result.walletBalance ?? "0"), ip });
 
       res.json({ message: "Payment successful", plan: result.plan, walletBalance: result.walletBalance });
-    } catch (e: any) { res.status(500).json({ message: e.message }); }
+    } catch (e: any) { res.status(e.statusCode ?? 500).json({ message: e.message }); }
   });
 
   // ── TOOL ACCESS CHECK ─────────────────────────────────────────────────────────
