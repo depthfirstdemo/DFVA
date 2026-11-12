@@ -68,7 +68,7 @@ export interface IStorage {
   getWorkspacesByUser(userId: number): Promise<Workspace[]>;
   addWorkspaceMember(data: { workspaceId: number; userId: number; role: string }): Promise<WorkspaceMember>;
   getWorkspaceMembers(workspaceId: number): Promise<(WorkspaceMember & { username: string; email: string | null })[]>;
-  updateMemberRole(memberId: number, role: string): Promise<WorkspaceMember>;
+  updateMemberRole(memberId: number, workspaceId: number, role: string): Promise<WorkspaceMember | undefined>;
   removeWorkspaceMember(memberId: number): Promise<void>;
   createInvitation(data: { workspaceId: number; email: string; role: string; token: string }): Promise<WorkspaceInvitation>;
   getInvitationByToken(token: string): Promise<WorkspaceInvitation | undefined>;
@@ -393,9 +393,11 @@ export class DatabaseStorage implements IStorage {
     return rows;
   }
 
-  // VULN: no check that caller is a workspace admin
-  async updateMemberRole(memberId: number, role: string): Promise<WorkspaceMember> {
-    const [member] = await db.update(workspaceMembers).set({ role }).where(eq(workspaceMembers.id, memberId)).returning();
+  async updateMemberRole(memberId: number, workspaceId: number, role: string): Promise<WorkspaceMember | undefined> {
+    const [member] = await db.update(workspaceMembers)
+      .set({ role })
+      .where(and(eq(workspaceMembers.id, memberId), eq(workspaceMembers.workspaceId, workspaceId)))
+      .returning();
     return member;
   }
 
