@@ -235,17 +235,27 @@ export async function chat(
 
       if (tc.function.name === "submit_ticket") {
         // VULN: userId taken from tool call args — ARIA uses caller-supplied userId.
-        // C4: refund ticket auto-approved regardless of how wallet balance was acquired.
         // Coerce to integer — model may send floats or strings
         const rawUid = args.userId ?? callerUserId ?? 0;
         const uid = parseInt(String(rawUid), 10) || (callerUserId ?? 0);
         try {
+          const type = String(args.type ?? "support");
+          const amount = typeof args.amount === "number"
+            ? args.amount
+            : typeof args.amount === "string" && args.amount.trim() !== ""
+              ? Number(args.amount)
+              : undefined;
+          if (type === "refund" && (amount == null || !Number.isFinite(amount) || amount <= 0)) {
+            throw new Error("Refund amount must be a finite, positive number");
+          }
+
           const ticket = await storage.createTicket({
             userId: uid,
-            type: String(args.type ?? "support"),
-            amount: args.amount != null ? parseFloat(String(args.amount)) : undefined,
+            type,
+            amount,
             reason: args.reason != null ? String(args.reason) : undefined,
-            autoApproved: args.type === "refund",   // VULN: refund = auto-approved
+            // Payment provenance is not available in this path, so billing must review refunds.
+            autoApproved: false,
             ariaGenerated: true,
           });
           result = { ticketId: ticket.id, status: ticket.status, amount: ticket.amount };
