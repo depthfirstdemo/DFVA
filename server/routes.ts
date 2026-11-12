@@ -1681,11 +1681,17 @@ export async function registerRoutes(
   });
 
   // GET /api/workspaces/:id/scans — shared scan view for workspace members.
-  // VULN #52: returns ALL scans from ALL member userIds — cross-tenant data bleed.
-  //           No role check: Viewer can see Analyst/Admin scan results.
-  app.get("/api/workspaces/:id/scans", async (req, res) => {
+  app.get("/api/workspaces/:id/scans", requireAuth, async (req: any, res) => {
     try {
-      const members = await storage.getWorkspaceMembers(parseInt(req.params.id));
+      const workspaceId = Number(req.params.id);
+      if (!Number.isSafeInteger(workspaceId) || workspaceId <= 0) {
+        return res.status(400).json({ message: "Invalid workspace ID" });
+      }
+
+      const members = await storage.getWorkspaceMembers(workspaceId);
+      const callerIsMember = members.some(m => m.userId === req.sentinelUser.userId);
+      if (!callerIsMember) return res.status(403).json({ message: "Forbidden" });
+
       const allScans = await Promise.all(members.map(m => storage.getScanJobsByUser(m.userId)));
       res.json(allScans.flat());
     } catch (e: any) { res.status(500).json({ message: e.message }); }
