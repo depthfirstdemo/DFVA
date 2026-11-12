@@ -1680,14 +1680,41 @@ export async function registerRoutes(
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
 
-  // GET /api/workspaces/:id/scans — shared scan view for workspace members.
-  // VULN #52: returns ALL scans from ALL member userIds — cross-tenant data bleed.
-  //           No role check: Viewer can see Analyst/Admin scan results.
-  app.get("/api/workspaces/:id/scans", async (req, res) => {
+  // GET /api/workspaces/:id/scans — scans explicitly shared with this workspace.
+  app.get("/api/workspaces/:id/scans", requireAuth, async (req: any, res) => {
     try {
-      const members = await storage.getWorkspaceMembers(parseInt(req.params.id));
-      const allScans = await Promise.all(members.map(m => storage.getScanJobsByUser(m.userId)));
-      res.json(allScans.flat());
+      const workspaceId = Number(req.params.id);
+      if (!Number.isSafeInteger(workspaceId) || workspaceId <= 0) {
+        return res.status(400).json({ message: "Invalid workspace ID" });
+      }
+      if (!await storage.isWorkspaceMember(workspaceId, req.sentinelUser.userId)) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+
+      res.json(await storage.getScansSharedToWorkspace(workspaceId));
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
+  // A scan owner may explicitly share their scan with a workspace they belong to.
+  app.post("/api/workspaces/:id/scans/:scanId", requireAuth, async (req: any, res) => {
+    try {
+      const workspaceId = Number(req.params.id);
+      const scanId = Number(req.params.scanId);
+      if (!Number.isSafeInteger(workspaceId) || workspaceId <= 0 ||
+          !Number.isSafeInteger(scanId) || scanId <= 0) {
+        return res.status(400).json({ message: "Invalid workspace or scan ID" });
+      }
+
+      const callerId = req.sentinelUser.userId;
+      if (!await storage.isWorkspaceMember(workspaceId, callerId)) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+      const scan = await storage.getScanJob(scanId);
+      if (!scan) return res.status(404).json({ message: "Scan not found" });
+      if (scan.userId !== callerId) return res.status(403).json({ message: "Forbidden" });
+
+      const share = await storage.shareScanWithWorkspace(workspaceId, scanId, callerId);
+      res.status(201).json(share);
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
 

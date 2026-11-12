@@ -51,7 +51,7 @@ export default function Workspaces() {
 
   const { data: scans = [] } = useQuery<any[]>({
     queryKey: ["/api/workspaces", selectedWs?.id, "scans"],
-    queryFn: () => fetch(`/api/workspaces/${selectedWs!.id}/scans`).then(r => r.json()),
+    queryFn: () => apiRequest("GET", `/api/workspaces/${selectedWs!.id}/scans`).then(r => r.json()),
     enabled: !!selectedWs,
   });
 
@@ -358,10 +358,6 @@ export default function Workspaces() {
               <div className="flex items-center gap-2 mb-1">
                 <BarChart2 className="w-4 h-4 text-primary" />
                 <h3 className="font-semibold text-sm">Shared Scans</h3>
-                <div className="ml-auto text-xs text-amber-400/80 bg-amber-500/5 border border-amber-500/20 rounded px-2 py-0.5 flex items-center gap-1">
-                  <AlertTriangle className="w-3 h-3" />
-                  Cross-tenant bleed — all members' scans visible
-                </div>
               </div>
               {scans.length === 0 ? (
                 <p className="text-xs text-muted-foreground">No scans found for this workspace.</p>
