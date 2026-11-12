@@ -1445,11 +1445,10 @@ export async function registerRoutes(
     res.json({ message: "Document deleted." });
   });
 
-  // GET /api/rag/chunks — raw chunk dump (no auth, full cross-tenant exposure)
-  // VULN #36: exposes every chunk from every tenant, including filename, uploaderUsername, userId
-  app.get("/api/rag/chunks", async (_req, res) => {
-    const chunks = await storage.getAllRagChunks();
-    // Strip embeddings from the dump (too large) but leak all metadata + content
+  // GET /api/rag/chunks — return only chunks owned by the authenticated user
+  app.get("/api/rag/chunks", requireAuth, async (req: any, res) => {
+    const chunks = await storage.getRagChunksByOwner(req.sentinelUser.userId);
+    // Strip embeddings from the response because they are not needed by clients.
     res.json(chunks.map(c => ({
       id: c.id, documentId: c.documentId, userId: c.userId,
       uploaderUsername: c.uploaderUsername, filename: c.filename,
