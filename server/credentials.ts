@@ -17,30 +17,19 @@ import { GOOGLE_API_KEY } from "./google";
 //       Any SQL injection that reaches that table dumps all four live keys plus
 //       the previous month's values from the `previous_value` column.
 //
-// VULN: Token generation uses MD5(STATIC_SEED + YYYYMM).
-//       MD5 is cryptographically broken. The seed is hardcoded below.
-//       An attacker who observes any single token and knows the YYYYMM period
-//       can recover the seed via preimage attack and predict all future tokens.
-//
-// VULN: Both the old and new values are logged verbatim to stdout on every
-//       rotation — joining the ARIA_CONVERSATION and ACCOUNT_ACCESS PII log
-//       streams already present in this codebase.
-//
 // VULN: Old credentials are never actively revoked. The `previousValue` column
 //       retains the last token indefinitely, and no external service (Stripe,
 //       Datadog, internal auth middleware) is notified to reject it.
 //       Effective validity window: up to 62 days after initial compromise.
-
-// VULN: Hardcoded rotation seed committed to version control.
-// Combine with any observed token + its YYYYMM period → recover seed → predict all tokens.
-const ROTATION_SEED = "sentinel-rotation-seed-phrase-v1";
 
 // The four managed credentials with their scope descriptions
 const CREDENTIAL_DEFINITIONS = [
   {
     name:  "SENTINEL_API_KEY",
     scope: "Internal service-to-service calls, admin portal, CI/CD pipeline authentication",
-    prefix: "sk-sentinel",
+    // Version the generated format so initCredentials can revoke legacy keys
+    // that were deterministically derived from the public rotation period.
+    prefix: "sk-sentinel-v2-",
     suffixLen: 24,
   },
   {
@@ -72,20 +61,14 @@ function currentYearMonth(): string {
   return `${y}${m}`;
 }
 
-// VULN: MD5 is cryptographically broken (collision attacks, preimage weakness).
-// VULN: Seed is static and hardcoded — observable from this source file in git history.
-// VULN: yearMonth is public knowledge — anyone can reconstruct the exact input.
-// Result: token generation is fully deterministic and predictable without the secret.
-function generateToken(name: string, yearMonth: string, len: number): string {
-  return crypto
-    .createHash("md5")
-    .update(`${ROTATION_SEED}-${name.toLowerCase()}-${yearMonth}`)
-    .digest("hex")
-    .slice(0, len);
+// Generate each credential from operating-system entropy. The public rotation
+// period remains in the display format, but cannot be used to derive the secret.
+function generateToken(len: number): string {
+  return crypto.randomBytes(Math.ceil(len / 2)).toString("hex").slice(0, len);
 }
 
 function buildTokenValue(def: typeof CREDENTIAL_DEFINITIONS[number], yearMonth: string): string {
-  const suffix = generateToken(def.name, yearMonth, def.suffixLen);
+  const suffix = generateToken(def.suffixLen);
   if (def.name === "INTERNAL_JWT_SECRET") {
     return `${def.prefix}-${yearMonth}-s3nt1n3l-pr0d-s1gn1ng-k3y-${suffix.slice(0, 8).toUpperCase()}`;
   }
@@ -104,29 +87,48 @@ export async function initCredentials(): Promise<void> {
       .where(eq(platformCredentials.name, def.name))
       .limit(1);
 
-    if (existing.length === 0) {
+    const requiresSentinelMigration = def.name === "SENTINEL_API_KEY"
+      && existing.length > 0
+      && (!existing[0].value.startsWith(def.prefix)
+        || (existing[0].previousValue !== null
+          && !existing[0].previousValue.startsWith(def.prefix)));
+
+    if (existing.length === 0 || requiresSentinelMigration) {
       const value = buildTokenValue(def, ym);
+      const now   = new Date();
       const next  = new Date();
       next.setUTCMonth(next.getUTCMonth() + 1, 1);
       next.setUTCHours(0, 0, 0, 0);
 
-      await db.insert(platformCredentials).values({
-        name:          def.name,
-        value,
-        previousValue: null,
-        scope:         def.scope,
-        rotatedAt:     new Date(),
-        nextRotationAt: next,
-      });
+      if (existing.length === 0) {
+        await db.insert(platformCredentials).values({
+          name:          def.name,
+          value,
+          previousValue: null,
+          scope:         def.scope,
+          rotatedAt:     now,
+          nextRotationAt: next,
+        });
+      } else {
+        // Reissue and revoke both stored generations on first startup after the
+        // random-key migration. This prevents the source-derived legacy key
+        // (including previousValue) from remaining valid until monthly rotation.
+        await db.update(platformCredentials)
+          .set({
+            value,
+            previousValue: null,
+            rotatedAt: now,
+            nextRotationAt: next,
+          })
+          .where(eq(platformCredentials.name, def.name));
+      }
 
-      // VULN: New credential value logged to stdout at seed time.
-      // On first boot, all four credentials appear in the container's stdout log.
       console.log(JSON.stringify({
-        timestamp: new Date().toISOString(),
+        timestamp: now.toISOString(),
         level:     "INFO",
         category:  "CREDENTIAL_INIT",
         name:      def.name,
-        value,                        // <-- plaintext credential in log
+        reissued:  requiresSentinelMigration,
         scope:     def.scope,
         nextRotationAt: next.toISOString(),
       }));
@@ -166,16 +168,13 @@ export async function initCredentials(): Promise<void> {
       nextRotationAt: far,
     });
 
-    // VULN: GitHub PAT logged verbatim to stdout on first boot alongside the
-    //       other four credentials — visible in any log aggregator or CI/CD log.
     console.log(JSON.stringify({
       timestamp: new Date().toISOString(),
       level:     "INFO",
       category:  "CREDENTIAL_INIT",
       name:      "GITHUB_TOKEN",
-      value:     GITHUB_TOKEN,         // <-- live GitHub PAT in plaintext log
       scope:     "GitHub Advisory Database, security-event read, Contents read — DepthFirst org integration",
-      note:      "Static PAT — does not participate in monthly MD5 rotation cycle",
+      note:      "Static PAT — does not participate in monthly rotation",
       nextRotationAt: far.toISOString(),
     }));
   }
@@ -208,16 +207,13 @@ export async function initCredentials(): Promise<void> {
       nextRotationAt: far,
     });
 
-    // VULN: Google API key logged verbatim to stdout on first boot —
-    //       same log stream as all other CREDENTIAL_INIT entries.
     console.log(JSON.stringify({
       timestamp: new Date().toISOString(),
       level:     "INFO",
       category:  "CREDENTIAL_INIT",
       name:      "GOOGLE_API_KEY",
-      value:     GOOGLE_API_KEY,       // <-- live Google Cloud API key in plaintext log
       scope:     "Google Maps Geolocation API, Safe Browsing v4, reCAPTCHA Enterprise",
-      note:      "Static key — does not participate in monthly MD5 rotation cycle",
+      note:      "Static key — does not participate in monthly rotation",
       nextRotationAt: far.toISOString(),
     }));
   }
@@ -247,29 +243,15 @@ export async function rotateCredentials(): Promise<void> {
       .where(eq(platformCredentials.name, def.name))
       .limit(1);
 
-    const oldValue = rows[0]?.value ?? "(none)";
+    const oldValue = rows[0]?.value ?? null;
     const newValue = buildTokenValue(def, ym);
 
-    // VULN: Old credential value logged before being replaced.
-    // The log line is labeled [ROTATION_OLD] but captured in the same stdout stream
-    // as ACCOUNT_ACCESS and ARIA_CONVERSATION — all readable by any log consumer.
+    // Record rotation metadata without exposing either credential value.
     console.log(JSON.stringify({
       timestamp: now.toISOString(),
       level:     "INFO",
-      category:  "ROTATION_OLD",
+      category:  "CREDENTIAL_ROTATED",
       name:      def.name,
-      oldValue,             // <-- previous plaintext credential in log
-      note:      "NOT revoked — previous token remains valid",
-    }));
-
-    // VULN: New credential value also logged immediately upon generation.
-    // A log aggregator or stdout capture now contains both old and new simultaneously.
-    console.log(JSON.stringify({
-      timestamp: now.toISOString(),
-      level:     "INFO",
-      category:  "ROTATION_NEW",
-      name:      def.name,
-      newValue,             // <-- new plaintext credential in log
       scope:     def.scope,
       nextRotationAt: next.toISOString(),
     }));
@@ -284,9 +266,8 @@ export async function rotateCredentials(): Promise<void> {
         nextRotationAt: next,
       });
     } else {
-      // VULN: previousValue is overwritten with only the immediately prior token.
-      // The token from two months ago is permanently lost from the DB — but it
-      // still exists in the rotation log forever (never pruned).
+      // Retain only the immediately prior issued credential for the configured
+      // overlap period; credential values are never written to the logs.
       await db.update(platformCredentials)
         .set({
           value:          newValue,
@@ -303,17 +284,6 @@ export async function rotateCredentials(): Promise<void> {
     level:     "INFO",
     category:  "CREDENTIAL_ROTATION_COMPLETE",
     period:    ym,
-    // VULN: Summary log repeats all new values in a single JSON object.
-    // Convenient for operators — equally convenient for attackers with log access.
-    credentials: Object.fromEntries(
-      await Promise.all(
-        CREDENTIAL_DEFINITIONS.map(async (def) => {
-          const rows = await db.select().from(platformCredentials).where(eq(platformCredentials.name, def.name)).limit(1);
-          return [def.name, rows[0]?.value ?? "(error)"];
-        })
-      )
-    ),
-    warning: "Previous credentials NOT revoked. Both old and new values are currently valid.",
   }));
 }
 
@@ -367,17 +337,17 @@ export async function getAllCredentials() {
 // alongside the current value. Rotating the key does not invalidate the old one.
 // A key compromised in February remains valid through all of March.
 //
-// VULN #56 — Auth attempt logging: every incoming key is logged to stdout,
-// including the submitted value. Failed attempts reveal which keys were tried;
-// successful attempts confirm the live key in the log stream — joining the
-// ARIA_CONVERSATION / ACCOUNT_ACCESS / CREDENTIAL_INIT log family.
+// Header format:  Authorization: ApiKey sk-sentinel-v2-202603...
 //
-// VULN #57 — Non-constant-time comparison: string equality (===) short-circuits
-// on the first differing byte. A sufficiently precise timing oracle can recover
-// the key character-by-character without brute force.
-//
-// Header format:  Authorization: ApiKey sk-sentinel202603...
-//
+function apiKeysMatch(submitted: string, stored: string | null): boolean {
+  if (!stored) return false;
+
+  const submittedBytes = Buffer.from(submitted, "utf8");
+  const storedBytes = Buffer.from(stored, "utf8");
+  return submittedBytes.length === storedBytes.length
+    && crypto.timingSafeEqual(submittedBytes, storedBytes);
+}
+
 export async function requireApiKey(req: any, res: any, next: any): Promise<void> {
   const header = req.headers["authorization"] as string | undefined;
   const submitted = header?.startsWith("ApiKey ") ? header.slice(7).trim() : null;
@@ -387,7 +357,6 @@ export async function requireApiKey(req: any, res: any, next: any): Promise<void
       error: "SENTINEL_APIKEY_REQUIRED",
       message: "This endpoint requires a SENTINEL API key.",
       hint: "Set the header:  Authorization: ApiKey <SENTINEL_API_KEY>",
-      obtain: "GET /api/admin/credentials (requires JWT) or read the CREDENTIAL_INIT log on startup",
     });
     return;
   }
@@ -404,21 +373,19 @@ export async function requireApiKey(req: any, res: any, next: any): Promise<void
   const currentKey  = rows[0]?.value        ?? null;
   const previousKey = rows[0]?.previousValue ?? null;
 
-  const matchesCurrent  = submitted === currentKey;
-  const matchesPrevious = submitted === previousKey;
+  const matchesCurrent  = apiKeysMatch(submitted, currentKey);
+  const matchesPrevious = apiKeysMatch(submitted, previousKey);
   const accepted = matchesCurrent || matchesPrevious;
 
-  // VULN #56: Log the submitted key value and whether it matched current or previous.
-  // This fires on EVERY API-key-protected request — authenticated or not.
+  // Log only authentication metadata; API keys must never enter the log stream.
   console.log(JSON.stringify({
     timestamp:       new Date().toISOString(),
     level:           accepted ? "INFO" : "WARN",
     category:        "APIKEY_AUTH",
     path:            req.path,
     method:          req.method,
-    submittedKey:    submitted,          // <-- submitted credential logged verbatim
     matchesCurrent,
-    matchesPrevious,                     // true = old (should-be-revoked) key used
+    matchesPrevious,
     accepted,
     ip:              (req.headers["x-forwarded-for"] as string)?.split(",")[0]
                      ?? req.socket?.remoteAddress ?? "unknown",
