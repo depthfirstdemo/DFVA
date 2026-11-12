@@ -1618,7 +1618,6 @@ export async function registerRoutes(
   });
   // VULN #48 (POST /api/workspaces/:id/invite):
   //   - Token generated with Math.random().toString(36) — same weakness as #13.
-  //   - Intended role written to DB but POST /api/invitations/:token/accept reads ?role= from URL.
   //   - No check that caller is a workspace admin.
   app.post("/api/workspaces/:id/invite", async (req, res) => {
     try {
@@ -1628,9 +1627,9 @@ export async function registerRoutes(
       // VULN: Math.random() token — predictable, brute-forceable
       const token = Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2);
       const inv = await storage.createInvitation({ workspaceId, email, role, token });
-      // Simulate sending invite email — link embeds role in URL (the tamper target)
-      const inviteUrl = `/invite/${token}?role=${role}`;
-      res.json({ invitation: inv, inviteUrl, note: "Invite link sent (role embedded in URL)" });
+      // Simulate sending the invite email. The role remains server-side invitation data.
+      const inviteUrl = `/invite/${token}`;
+      res.json({ invitation: inv, inviteUrl, note: "Invite link sent" });
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
 
@@ -1645,18 +1644,15 @@ export async function registerRoutes(
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
 
-  // VULN #49 (POST /api/invitations/:token/accept):
-  //   Role taken from ?role= query param — NOT from the invitation record.
-  //   Attacker modifies URL: /invite/TOKEN?role=admin → joins as Workspace Admin.
+  // POST /api/invitations/:token/accept — the stored invitation determines the member role.
   app.post("/api/invitations/:token/accept", async (req, res) => {
     try {
       const { userId } = req.body;
       if (!userId) return res.status(400).json({ message: "userId required" });
       const pendingInv = await storage.getInvitationByToken(req.params.token);
       if (!pendingInv) return res.status(404).json({ message: "Invitation not found" });
-      const inv = await storage.acceptInvitation(req.params.token, parseInt(userId), pendingInv.role);
-      res.json({ message: `Joined workspace as ${pendingInv.role}`, invitation: inv });
-      res.json({ message: `Joined workspace as ${role}`, invitation: inv });
+      const inv = await storage.acceptInvitation(req.params.token, parseInt(userId));
+      res.json({ message: `Joined workspace as ${inv.role}`, invitation: inv });
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
 
