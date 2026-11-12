@@ -1577,12 +1577,12 @@ export async function registerRoutes(
   });
 
   // ── TEAM WORKSPACES ───────────────────────────────────────────────────────────
-  // VULN #44 (POST /api/workspaces): No plan gate — free users can create workspaces.
-  app.post("/api/workspaces", async (req, res) => {
+  // Workspace ownership is always assigned to the authenticated creator.
+  app.post("/api/workspaces", requireAuth, async (req: any, res) => {
     try {
-      const { name, ownerId } = req.body;
-      if (!name || !ownerId) return res.status(400).json({ message: "name and ownerId required" });
-      const ws = await storage.createWorkspace({ name, ownerId: parseInt(ownerId) });
+      const { name } = req.body;
+      if (!name) return res.status(400).json({ message: "name required" });
+      const ws = await storage.createWorkspace({ name, ownerId: req.sentinelUser.userId });
       res.json(ws);
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
@@ -1681,11 +1681,11 @@ export async function registerRoutes(
   });
 
   // GET /api/workspaces/:id/scans — shared scan view for workspace members.
-  // VULN #52: returns ALL scans from ALL member userIds — cross-tenant data bleed.
-  //           No role check: Viewer can see Analyst/Admin scan results.
-  app.get("/api/workspaces/:id/scans", async (req, res) => {
+  app.get("/api/workspaces/:id/scans", requireAuth, async (req: any, res) => {
     try {
       const members = await storage.getWorkspaceMembers(parseInt(req.params.id));
+      const callerIsMember = members.some(m => m.userId === req.sentinelUser.userId);
+      if (!callerIsMember) return res.status(403).json({ message: "Forbidden" });
       const allScans = await Promise.all(members.map(m => storage.getScanJobsByUser(m.userId)));
       res.json(allScans.flat());
     } catch (e: any) { res.status(500).json({ message: e.message }); }
