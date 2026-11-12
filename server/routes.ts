@@ -1672,10 +1672,23 @@ export async function registerRoutes(
   });
 
   // DELETE /api/workspaces/:id/members/:memberId — remove a member.
-  // VULN #51: no role check — any member can remove any other member.
-  app.delete("/api/workspaces/:id/members/:memberId", async (req, res) => {
+  app.delete("/api/workspaces/:id/members/:memberId", requireAuth, async (req, res) => {
     try {
-      await storage.removeWorkspaceMember(parseInt(req.params.memberId));
+      const workspaceId = Number(req.params.id);
+      const memberId = Number(req.params.memberId);
+      if (!Number.isSafeInteger(workspaceId) || workspaceId <= 0 ||
+          !Number.isSafeInteger(memberId) || memberId <= 0) {
+        return res.status(400).json({ message: "Invalid workspace or member ID" });
+      }
+
+      const members = await storage.getWorkspaceMembers(workspaceId);
+      const callerIsAdmin = members.some(
+        member => member.userId === req.sentinelUser.userId && member.role === "admin",
+      );
+      if (!callerIsAdmin) return res.status(403).json({ message: "Forbidden" });
+
+      const removed = await storage.removeWorkspaceMember(workspaceId, memberId);
+      if (!removed) return res.status(404).json({ message: "Member not found" });
       res.json({ message: "Member removed" });
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
