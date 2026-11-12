@@ -40,7 +40,6 @@ import {
   flatFlatten,             // → flat.flatten               (CVE-2020-28168)
   markedRender,            // → marked()                   (CVE-2022-21681)
   lodashMerge,             // → _.merge                    (CVE-2019-10744)
-  nodeSerializeDeserialize,// → serialize.unserialize      (CVE-2017-5941)
 } from "./vuln-sinks";
 
 // Keep direct imports for packages also used outside route CVE demos
@@ -1128,15 +1127,22 @@ export async function registerRoutes(
     res.json({ html });
   });
 
-  // 16. node-serialize@0.0.4 — RCE via IIFE in serialised object (auth required)
-  // CVE-2017-5941: unserialize() calls eval() on function-valued properties
-  // Bypass: obtain JWT (login or forge via alg:none), then send IIFE payload in `data`
+  // 16. Preferences are accepted as JSON text and parsed strictly as inert data.
   app.post("/api/preferences/save", requireAuth, (req, res) => {
-    const { data } = req.body;
+    const data = req.body?.data;
+    if (typeof data !== "string") {
+      return res.status(400).json({ message: "invalid preferences" });
+    }
+
     try {
-      const prefs = nodeSerializeDeserialize(data); // RCE if data contains {"x":"_$$ND_FUNC$$_function(){...}()"}
+      const prefs: unknown = JSON.parse(data);
+      if (prefs === null || typeof prefs !== "object" || Array.isArray(prefs)) {
+        return res.status(400).json({ message: "invalid preferences" });
+      }
       res.json({ saved: true, prefs });
-    } catch (e: any) { res.status(500).json({ message: e.message }); }
+    } catch {
+      res.status(400).json({ message: "invalid preferences" });
+    }
   });
 
   // ── ARIA CHAT (prompt injection + RAG poisoning + ARIA tool abuse) ───────────
