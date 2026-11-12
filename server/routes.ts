@@ -1437,9 +1437,19 @@ export async function registerRoutes(
   });
 
   // DELETE /api/rag/documents/:id
-  // VULN #35: IDOR — no ownership check. Any user can delete any document by ID.
-  app.delete("/api/rag/documents/:id", async (req, res) => {
-    const id = parseInt(req.params.id);
+  // Authentication and ownership are required before removing indexed content.
+  app.delete("/api/rag/documents/:id", requireAuth, async (req: any, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      return res.status(400).json({ message: "Invalid document ID" });
+    }
+
+    const document = await storage.getRagDocument(id);
+    if (!document) return res.status(404).json({ message: "Document not found" });
+    if (document.userId !== req.sentinelUser.userId) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
     await storage.deleteRagChunksByDocument(id);
     await storage.deleteRagDocument(id);
     res.json({ message: "Document deleted." });

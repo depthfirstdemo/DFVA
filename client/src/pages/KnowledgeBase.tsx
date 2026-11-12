@@ -438,7 +438,7 @@ export default function KnowledgeBase() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: number) => fetch(`/api/rag/documents/${id}`, { method: "DELETE" }).then(r => r.json()),
+    mutationFn: (id: number) => apiRequest("DELETE", `/api/rag/documents/${id}`).then(r => r.json()),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["/api/rag/documents", userId] }); toast({ title: "Document deleted" }); },
   });
 
