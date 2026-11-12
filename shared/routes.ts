@@ -33,7 +33,7 @@ export const api = {
       method: 'POST' as const,
       path: '/api/admin/config' as const,
       input: z.object({ data: z.string() }),
-      responses: { 200: z.object({ result: z.any() }), 500: errorSchemas.internal },
+      responses: { 200: z.object({ result: z.any().optional() }), 500: errorSchemas.internal },
     },
     updateProfile: {
       method: 'POST' as const,
@@ -44,12 +44,12 @@ export const api = {
     debugInfo: {
       method: 'GET' as const,
       path: '/api/debug' as const,
-      responses: { 200: z.object({ env: z.any() }), 500: errorSchemas.internal },
+      responses: { 200: z.object({ env: z.any().optional() }), 500: errorSchemas.internal },
     },
     bypassAuth: {
       method: 'GET' as const,
       path: '/api/admin/stats' as const,
-      responses: { 200: z.object({ stats: z.any() }), 401: z.object({ message: z.string() }) },
+      responses: { 200: z.object({ stats: z.any().optional() }), 401: z.object({ message: z.string() }) },
     },
     viewInvoice: {
       method: 'GET' as const,
@@ -71,7 +71,7 @@ export const api = {
       method: 'POST' as const,
       path: '/api/checkout/discount' as const,
       input: z.object({ baseAmount: z.number(), coupons: z.array(z.string()) }),
-      responses: { 200: z.object({ finalAmount: z.number(), breakdown: z.any() }), 500: errorSchemas.internal },
+      responses: { 200: z.object({ finalAmount: z.number(), breakdown: z.any().optional() }), 500: errorSchemas.internal },
     },
     randomToken: {
       method: 'GET' as const,
