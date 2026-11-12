@@ -35,7 +35,8 @@ import {
   xmldomParseFromString,   // → DOMParser.parseFromString  (CVE-2022-39353, CVE-2021-21366)
   xmldomParseXXE,          // → DOMParser.parseFromString  (XXE path)
   vm2RunScript,            // → NodeVM.run                 (CVE-2023-29017, CVE-2023-37466)
-  pugRender,               // → pug.render                 (CVE-2021-21353)
+  PUG_GREETING_TEMPLATE,
+  pugRenderGreeting,       // → pug.render with a server-owned template
   flatUnflatten,           // → flat.unflatten             (CVE-2020-28168)
   flatFlatten,             // → flat.flatten               (CVE-2020-28168)
   markedRender,            // → marked()                   (CVE-2022-21681)
@@ -1206,14 +1207,25 @@ export async function registerRoutes(
     }
   });
 
-  // 20. pug@2.x — Server-Side Template Injection → RCE (auth required)
-  // CVE-2021-21353: pug.render() with attacker-controlled template executes arbitrary code.
-  // Payload: template = "-var x = require('child_process').execSync('id').toString()\n= x"
+  // Render the approved greeting template with data-only, escaped locals.
+  // Never compile caller-provided Pug source because Pug templates can execute JavaScript.
   app.post("/api/tools/render-template", requireAuth, (req, res) => {
-    const { template, locals } = req.body;
+    const { template, locals } = req.body ?? {};
     if (!template) return res.status(400).json({ message: "template required" });
+    if (template !== PUG_GREETING_TEMPLATE) {
+      return res.status(400).json({ message: "unsupported template" });
+    }
+    if (locals !== undefined && (typeof locals !== "object" || locals === null || Array.isArray(locals))) {
+      return res.status(400).json({ message: "locals must be an object" });
+    }
+
+    const name = locals?.name ?? "";
+    if (typeof name !== "string" || name.length > 100) {
+      return res.status(400).json({ message: "locals.name must be a string of at most 100 characters" });
+    }
+
     try {
-      const html = pugRender(template, locals ?? {}); // → pug.render (CVE-2021-21353)
+      const html = pugRenderGreeting(name);
       res.json({ html });
     } catch (e: any) {
       res.status(500).json({ message: e.message });
