@@ -10,6 +10,7 @@ import fs from "fs";
 import path from "path";
 import { signToken, requireAuth } from "./auth";
 import axios from "axios";
+import { safePublicHttpGet, UnsafeFetchUrlError } from "./safePublicFetch";
 import multer from "multer";
 import { createRequire } from "module";
 // import.meta.url is undefined in the CJS production bundle (esbuild format:"cjs").
@@ -786,36 +787,17 @@ export async function registerRoutes(
     });
   });
 
-  // 3. SSRF
-  // Requires auth. A blocklist guards against the obvious private IP patterns —
-  // but it checks only the PARSED hostname string, missing alternative encodings:
-  //   • http://0.0.0.0/             → routes to 127.0.0.1 on Linux
-  //   • http://127.1/               → short-form of 127.0.0.1 (RFC 791)
-  //   • http://2130706433/          → 127.0.0.1 in decimal
-  //   • http://0177.0.0.1/          → 127.0.0.1 in octal
-  //   • http://[::ffff:127.0.0.1]/  → IPv4-mapped IPv6
-  //   • http://169.254.169.254/     → AWS metadata (NOT in blocklist)
-  //   • DNS rebinding: point attacker.com → 127.0.0.1 post-resolution
+  // 3. Fetch public HTTP(S) URLs only; each redirect is checked before connecting.
   app.post(api.tools.fetchUrl.path, requireAuth, async (req, res) => {
     const { url } = req.body;
-    if (!url) return res.status(400).json({ message: "URL required" });
-
-    // "Security" blocklist — obvious forms only; non-standard encodings bypass it
-    const BLOCKED_HOSTS = ["localhost", "127.0.0.1", "::1", "0:0:0:0:0:0:0:1", "[::1]"];
-    try {
-      const parsed = new URL(url);
-      const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
-      if (BLOCKED_HOSTS.includes(hostname)) {
-        return res.status(400).json({ message: `Requests to '${hostname}' are not permitted.` });
-      }
-    } catch {
-      return res.status(400).json({ message: "Malformed URL." });
-    }
+    if (typeof url !== "string" || !url) return res.status(400).json({ message: "URL required" });
 
     try {
-      const r = await axios.get(url, { timeout: 5000 });
+      const r = await safePublicHttpGet(url);
       res.json({ data: typeof r.data === "string" ? r.data : JSON.stringify(r.data).substring(0, 4000) });
-    } catch (e: any) { res.status(500).json({ message: e.message }); }
+    } catch (e: any) {
+      res.status(e instanceof UnsafeFetchUrlError ? 400 : 500).json({ message: e.message });
+    }
   });
 
   // 4. Path Traversal
