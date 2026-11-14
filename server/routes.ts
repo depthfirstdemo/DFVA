@@ -1619,12 +1619,19 @@ export async function registerRoutes(
   // VULN #48 (POST /api/workspaces/:id/invite):
   //   - Token generated with Math.random().toString(36) — same weakness as #13.
   //   - Intended role written to DB but POST /api/invitations/:token/accept reads ?role= from URL.
-  //   - No check that caller is a workspace admin.
-  app.post("/api/workspaces/:id/invite", async (req, res) => {
+  app.post("/api/workspaces/:id/invite", requireAuth, async (req, res) => {
     try {
       const workspaceId = parseInt(req.params.id);
       const { email, role = "viewer" } = req.body;
       if (!email) return res.status(400).json({ message: "email required" });
+      if (!["viewer", "analyst", "admin"].includes(role)) {
+        return res.status(400).json({ message: "Invalid role" });
+      }
+      const members = await storage.getWorkspaceMembers(workspaceId);
+      const callerIsAdmin = members.some(
+        (member: any) => member.userId === req.sentinelUser.userId && member.role === "admin",
+      );
+      if (!callerIsAdmin) return res.status(403).json({ message: "Forbidden" });
       // VULN: Math.random() token — predictable, brute-forceable
       const token = Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2);
       const inv = await storage.createInvitation({ workspaceId, email, role, token });
