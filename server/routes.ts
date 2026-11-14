@@ -8,7 +8,7 @@ import { api } from "@shared/routes";
 import { exec } from "child_process";
 import fs from "fs";
 import path from "path";
-import { signToken, requireAuth } from "./auth";
+import { signToken, requireAuth, rememberMe, buildRememberMeCookie } from "./auth";
 import axios from "axios";
 import multer from "multer";
 import { createRequire } from "module";
@@ -194,6 +194,9 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+
+  // Restore a session from the remember-me cookie/query token before route handlers run.
+  app.use(rememberMe);
 
   // ── Seed on startup ──────────────────────────────────────────────────────────
   setTimeout(async () => {
@@ -510,6 +513,16 @@ export async function registerRoutes(
 
   app.post("/api/auth/logout", (_req, res) => {
     res.json({ message: "Logged out." });
+  });
+
+  // POST /api/auth/remember-me — issue a long-lived token for the current session
+  // and store it in the rm_token cookie so the device stays signed in. The token
+  // is signed and later verified the same way as a normal login token.
+  app.post("/api/auth/remember-me", requireAuth, (req: any, res) => {
+    const { userId, username, role, plan } = req.sentinelUser;
+    const token = signToken({ userId, username, role, plan });
+    res.setHeader("Set-Cookie", buildRememberMeCookie(token));
+    res.json({ message: "This device will be remembered.", token });
   });
 
   // GET /api/auth/me — return the currently authenticated user's profile.
