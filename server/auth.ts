@@ -59,6 +59,12 @@ export function verifyToken(token: string): SentinelClaims {
 }
 
 export function requireAuth(req: any, res: any, next: any): void {
+  // A remember-me cookie/query token may already have populated the session.
+  if (req.sentinelUser) {
+    next();
+    return;
+  }
+
   const header = req.headers["authorization"] as string | undefined;
   const token  = header?.startsWith("Bearer ") ? header.slice(7) : null;
 
@@ -77,4 +83,52 @@ export function requireAuth(req: any, res: any, next: any): void {
   } catch (e: any) {
     res.status(401).json({ error: "SENTINEL_INVALID_TOKEN", message: e.message });
   }
+}
+
+export const REMEMBER_ME_COOKIE = "rm_token";
+export const REMEMBER_ME_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
+
+function readRememberToken(req: any): string | null {
+  const q = req.query?.[REMEMBER_ME_COOKIE];
+  if (typeof q === "string" && q) return q;
+
+  const cookieHeader = req.headers["cookie"] as string | undefined;
+  if (!cookieHeader) return null;
+  for (const part of cookieHeader.split(";")) {
+    const idx = part.indexOf("=");
+    if (idx === -1) continue;
+    const name = part.slice(0, idx).trim();
+    if (name === REMEMBER_ME_COOKIE) return decodeURIComponent(part.slice(idx + 1).trim());
+  }
+  return null;
+}
+
+/**
+ * Restores a session from a long-lived "remember this device" token supplied in
+ * the rm_token cookie or query parameter. The token is verified the same way as
+ * a Bearer token; an invalid token is ignored so the request can still fall back
+ * to normal authentication.
+ */
+export function rememberMe(req: any, _res: any, next: any): void {
+  if (!req.sentinelUser) {
+    const token = readRememberToken(req);
+    if (token) {
+      try {
+        req.sentinelUser = verifyToken(token);
+      } catch {
+        // Ignore an invalid remember-me token; requireAuth will handle auth.
+      }
+    }
+  }
+  next();
+}
+
+export function buildRememberMeCookie(token: string): string {
+  return [
+    `${REMEMBER_ME_COOKIE}=${encodeURIComponent(token)}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    `Max-Age=${REMEMBER_ME_MAX_AGE_SECONDS}`,
+  ].join("; ");
 }
