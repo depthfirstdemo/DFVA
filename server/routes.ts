@@ -16,10 +16,10 @@ import { createRequire } from "module";
 // Use an absolute path derived from process.cwd() so createRequire works in both environments.
 const _require = createRequire(path.resolve("./package.json"));
 const pdfParse: (buf: Buffer) => Promise<{ text: string }> = _require("pdf-parse");
-import { calculateProration, applyCreditsToOrder, finalizeUpgrade, processDowngrade } from "./billing";
+import { calculateProration, applyCreditsToOrder, processDowngrade } from "./billing";
 import { PLANS, type PlanKey } from "@shared/schema";
 import { chat, type ChatMessage } from "./chat";
-import { logLogin, logPayment, logPlanChange, logAccess } from "./logger";
+import { logLogin, logPlanChange, logAccess } from "./logger";
 import { ingestDocument, retrieveRelevantChunks } from "./rag";
 import { getAllCredentials, rotateCredentials, requireApiKey } from "./credentials";
 
@@ -294,17 +294,26 @@ export async function registerRoutes(
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
 
-  app.post(api.billing.upgrade.path, async (req, res) => {
-    try {
-      const { userId, targetPlan, paymentMethod } = req.body;
-      const result = await finalizeUpgrade(userId, targetPlan as PlanKey, paymentMethod);
-      res.json({ message: `Upgraded to ${targetPlan}`, plan: result.plan, walletBalance: result.newBalance });
-    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  // Upgrades must remain unavailable until a payment processor can provide a
+  // server-verified successful charge. Never grant a plan from raw card input.
+  app.post(api.billing.upgrade.path, requireAuth, (_req, res) => {
+    res.status(503).json({ message: "Checkout is temporarily unavailable." });
   });
 
-  app.post(api.billing.downgrade.path, async (req, res) => {
+  app.post(api.billing.downgrade.path, requireAuth, async (req: any, res) => {
     try {
-      const { userId, targetPlan } = req.body;
+      const userId: number = req.sentinelUser.userId;
+      const { targetPlan } = req.body;
+      if (typeof targetPlan !== "string" || !Object.prototype.hasOwnProperty.call(PLANS, targetPlan)) {
+        return res.status(400).json({ message: "A valid targetPlan is required" });
+      }
+
+      const current = await storage.getUserWallet(userId);
+      const planRank: Record<PlanKey, number> = { free: 0, pro: 1, enterprise: 2 };
+      if (!Object.prototype.hasOwnProperty.call(PLANS, current.plan) || planRank[targetPlan as PlanKey] >= planRank[current.plan as PlanKey]) {
+        return res.status(400).json({ message: "targetPlan must be lower than the current plan" });
+      }
+
       const result = await processDowngrade(userId, targetPlan as PlanKey);
       res.json({ message: `Downgraded to ${targetPlan}`, refundAmount: result.refundAmount, walletBalance: result.newBalance });
     } catch (e: any) { res.status(500).json({ message: e.message }); }
@@ -692,34 +701,10 @@ export async function registerRoutes(
     res.json(ticket);
   });
 
-  // ── PAYMENT ENDPOINT ─────────────────────────────────────────────────────────
-  // VULN #22: PAN data (full card number + CVV) written to server logs.
-  // Any log aggregator, SIEM, or /var/log reader will capture raw card data.
-  app.post("/api/subscription/pay", async (req, res) => {
-    try {
-      const { userId, targetPlan, card } = req.body;
-      if (!userId || !targetPlan || !card) return res.status(400).json({ message: "userId, targetPlan, and card required" });
-
-      const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0] ?? req.socket.remoteAddress ?? "unknown";
-      const userRecord = await storage.getUser(parseInt(userId));
-
-      // VULN: Full PAN + CVV logged — violates PCI-DSS requirement 3.2
-      console.log(`[payment] uid=${userId} plan=${targetPlan} card=${(card.number ?? '').replace(/\s/g, '')} exp=${card.expiry} cvv=${card.cvv} name="${card.name}"`);
-
-      const cardNum = (card.number ?? "").replace(/\s/g, "");
-
-      if (cardNum === "4000000000000002") {
-        return res.status(402).json({ message: "Your card was declined. Please try a different payment method." });
-      }
-
-      const fromPlan = userRecord?.plan ?? "unknown";
-      const result = await finalizeUpgrade(userId, targetPlan as PlanKey, cardNum);
-
-      // VULN: Full name (PII) written to payment audit log
-      logPayment({ userId: parseInt(userId), fullName: userRecord?.fullName ?? null, fromPlan, toPlan: result.plan, amount: parseFloat(result.walletBalance ?? "0"), ip });
-
-      res.json({ message: "Payment successful", plan: result.plan, walletBalance: result.walletBalance });
-    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  // No payment provider is integrated, so there is no trusted charge result to
+  // authorize a paid plan. Keep checkout fail-closed until one is available.
+  app.post("/api/subscription/pay", requireAuth, (_req, res) => {
+    res.status(503).json({ message: "Checkout is temporarily unavailable." });
   });
 
   // ── TOOL ACCESS CHECK ─────────────────────────────────────────────────────────
