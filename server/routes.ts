@@ -232,10 +232,6 @@ export async function registerRoutes(
     fs.writeFileSync(path.join(logsDir, "access.log"), "User admin logged in from 10.0.0.5\nUser jdoe failed login from 10.0.0.12\n");
   }
 
-  const AWS_ACCESS_KEY = "AKIAIOSFODNN7EXAMPLE";
-  const AWS_SECRET_KEY = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
-  const STRIPE_KEY     = "sk_test_4eC39HqLyjWDarjtT1zdp7dc";
-
   // ── PRODUCT / TOOL ROUTES ────────────────────────────────────────────────────
 
   app.get("/api/products", async (req, res) => {
@@ -1059,12 +1055,10 @@ export async function registerRoutes(
     res.json({ message: `Profile updated! New bio: ${bio}` });
   });
 
-  // 8. Info Exposure — hardcoded secrets
-  // Requires auth. Even so, any authenticated user (or forged token) retrieves all secrets.
-  app.get(api.tools.debugInfo.path, requireAuth, (_req, res) => {
-    // VULN: GITHUB_TOKEN set into process.env by initCredentials() —
-    //       any authenticated user (or forged-token holder) sees the live PAT here.
-    res.json({ env: { AWS_ACCESS_KEY, AWS_SECRET_KEY, STRIPE_KEY, DATABASE_URL: process.env.DATABASE_URL, NODE_ENV: process.env.NODE_ENV, GITHUB_TOKEN: process.env.GITHUB_TOKEN } });
+  // 8. Debug information — restricted to administrators and non-sensitive data.
+  app.get(api.tools.debugInfo.path, requireAuth, (req: any, res) => {
+    if (req.sentinelUser?.role !== "admin") return res.sendStatus(403);
+    res.json({ env: { NODE_ENV: process.env.NODE_ENV } });
   });
 
   // 9. IDOR — no ownership check on invoice
