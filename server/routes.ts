@@ -1576,6 +1576,22 @@ export async function registerRoutes(
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
 
+  // POST /api/targets/import-url
+  // Fetches the given URL server-side and returns its response body and status.
+  app.post("/api/targets/import-url", async (req, res) => {
+    try {
+      const { url } = req.body;
+      if (!url) return res.status(400).json({ message: "url required" });
+
+      const r = await fetch(url);
+      const text = await r.text();
+      let body: any;
+      try { body = JSON.parse(text); } catch { body = text; }
+
+      res.json({ status: r.status, body });
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
   // ── TEAM WORKSPACES ───────────────────────────────────────────────────────────
   // VULN #44 (POST /api/workspaces): No plan gate — free users can create workspaces.
   app.post("/api/workspaces", async (req, res) => {
