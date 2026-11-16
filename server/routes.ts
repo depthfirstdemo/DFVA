@@ -22,6 +22,7 @@ import { chat, type ChatMessage } from "./chat";
 import { logLogin, logPayment, logPlanChange, logAccess } from "./logger";
 import { ingestDocument, retrieveRelevantChunks } from "./rag";
 import { getAllCredentials, rotateCredentials, requireApiKey } from "./credentials";
+import { renderStaticTemplate, StaticTemplateError } from "./static-template";
 
 // ── CVE Sink Registry ─────────────────────────────────────────────────────────
 // All vulnerable package functions are imported from vuln-sinks.ts as named
@@ -35,7 +36,6 @@ import {
   xmldomParseFromString,   // → DOMParser.parseFromString  (CVE-2022-39353, CVE-2021-21366)
   xmldomParseXXE,          // → DOMParser.parseFromString  (XXE path)
   vm2RunScript,            // → NodeVM.run                 (CVE-2023-29017, CVE-2023-37466)
-  pugRender,               // → pug.render                 (CVE-2021-21353)
   flatUnflatten,           // → flat.unflatten             (CVE-2020-28168)
   flatFlatten,             // → flat.flatten               (CVE-2020-28168)
   markedRender,            // → marked()                   (CVE-2022-21681)
@@ -1206,17 +1206,20 @@ export async function registerRoutes(
     }
   });
 
-  // 20. pug@2.x — Server-Side Template Injection → RCE (auth required)
-  // CVE-2021-21353: pug.render() with attacker-controlled template executes arbitrary code.
-  // Payload: template = "-var x = require('child_process').execSync('id').toString()\n= x"
+  // 20. Render a restricted, static subset of Pug (auth required)
+  // Templates are parsed as allowlisted tags and escaped literal text. Executable Pug
+  // constructs are rejected and caller input is never passed to the Pug compiler.
   app.post("/api/tools/render-template", requireAuth, (req, res) => {
-    const { template, locals } = req.body;
-    if (!template) return res.status(400).json({ message: "template required" });
+    const { template } = req.body;
+    if (typeof template !== "string" || template.length === 0) {
+      return res.status(400).json({ message: "template required" });
+    }
     try {
-      const html = pugRender(template, locals ?? {}); // → pug.render (CVE-2021-21353)
+      const html = renderStaticTemplate(template);
       res.json({ html });
     } catch (e: any) {
-      res.status(500).json({ message: e.message });
+      const status = e instanceof StaticTemplateError ? 400 : 500;
+      res.status(status).json({ message: e.message });
     }
   });
 
