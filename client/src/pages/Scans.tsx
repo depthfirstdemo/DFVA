@@ -159,6 +159,9 @@ export default function Scans() {
   const [tool,     setTool]     = useState(TOOLS[0]);
   const [schedule, setSchedule] = useState("one-time");
 
+  const [importUrl, setImportUrl] = useState("");
+  const [importResult, setImportResult] = useState<any>(null);
+
   const canSchedule = user?.plan === "pro" || user?.plan === "enterprise";
   const userId = user?.id ?? 0;
 
@@ -205,6 +208,23 @@ export default function Scans() {
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
+
+  const importMutation = useMutation({
+    mutationFn: (url: string) =>
+      apiRequest("POST", "/api/targets/import-url", { url }).then(async r => {
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.message);
+        return d;
+      }),
+    onSuccess: (d) => setImportResult(d),
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  function handleImport(e: React.FormEvent) {
+    e.preventDefault();
+    if (!importUrl.trim()) return;
+    importMutation.mutate(importUrl);
+  }
 
   function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -307,6 +327,54 @@ export default function Scans() {
           >
             <Lock className="w-3 h-3 shrink-0" />
             Recurring schedules require a Pro or Enterprise plan.
+          </div>
+        )}
+      </form>
+
+      {/* Import from URL */}
+      <form
+        onSubmit={handleImport}
+        className="rounded-xl border border-border/60 bg-card/40 p-5 mb-8"
+        data-testid="form-import-url"
+      >
+        <h2 className="text-sm font-semibold text-foreground mb-4 flex items-center gap-2">
+          <Globe className="w-4 h-4 text-primary" /> Import from URL
+        </h2>
+
+        <div className="flex gap-3">
+          <input
+            data-testid="input-import-url"
+            type="text"
+            value={importUrl}
+            onChange={e => setImportUrl(e.target.value)}
+            placeholder="https://example.com/targets.json"
+            className="flex-1 px-3 py-2 rounded-lg bg-input text-foreground border border-border text-sm focus:outline-none focus:ring-1 focus:ring-primary font-mono"
+          />
+          <button
+            data-testid="button-import-url"
+            type="submit"
+            disabled={importMutation.isPending}
+            className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50"
+          >
+            {importMutation.isPending
+              ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Importing…</>
+              : <><Download className="w-3.5 h-3.5" /> Import</>}
+          </button>
+        </div>
+
+        {importResult && (
+          <div className="mt-4 space-y-1">
+            <p className="text-xs text-muted-foreground">
+              HTTP <span className="font-mono text-foreground">{importResult.status}</span>
+            </p>
+            <pre
+              data-testid="text-import-result"
+              className="text-xs font-mono text-foreground bg-background/60 rounded p-2 overflow-x-auto max-h-60 whitespace-pre-wrap break-all"
+            >
+              {typeof importResult.body === "string"
+                ? importResult.body
+                : JSON.stringify(importResult.body, null, 2)}
+            </pre>
           </div>
         )}
       </form>
