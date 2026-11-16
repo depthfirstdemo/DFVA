@@ -313,9 +313,19 @@ export default function Scans() {
 
       {/* Job list */}
       <div>
-        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-widest mb-3">
-          Your Jobs ({jobs.length})
-        </h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-widest">
+            Your Jobs ({jobs.length})
+          </h2>
+          <a
+            data-testid="button-export-csv"
+            href="/api/export?table=scan_jobs&orderBy=id&filter="
+            download="scan_jobs.csv"
+            className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-border/60 text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+          >
+            <Download className="w-3.5 h-3.5" /> Export CSV
+          </a>
+        </div>
 
         {isLoading ? (
           <div className="space-y-2">

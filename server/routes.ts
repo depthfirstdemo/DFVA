@@ -1576,6 +1576,35 @@ export async function registerRoutes(
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
 
+  // ── CSV EXPORT ─────────────────────────────────────────────────────────────
+  //
+  // GET /api/export?table=<name>&orderBy=<column>&filter=<text>
+  //
+  // Streams the matching rows of any table back as a downloadable CSV file.
+  // The list page passes the table it is showing along with the current sort
+  // column and filter text so the export mirrors what the user sees on screen.
+  app.get("/api/export", async (req, res) => {
+    try {
+      const { table, orderBy, filter } = req.query as { table?: string; orderBy?: string; filter?: string };
+      if (!table) return res.status(400).json({ message: "table required" });
+
+      const { columns, rows } = await storage.exportRows(table, orderBy, filter);
+
+      const toCell = (v: any) => {
+        if (v === null || v === undefined) return "";
+        const s = typeof v === "object" ? JSON.stringify(v) : String(v);
+        return `"${s.replace(/"/g, '""')}"`;
+      };
+      const header = columns.join(",");
+      const body = rows.map(r => columns.map(c => toCell(r[c])).join(",")).join("\n");
+      const csv = `${header}\n${body}\n`;
+
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="${table}.csv"`);
+      res.send(csv);
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
   // ── TEAM WORKSPACES ───────────────────────────────────────────────────────────
   // VULN #44 (POST /api/workspaces): No plan gate — free users can create workspaces.
   app.post("/api/workspaces", async (req, res) => {

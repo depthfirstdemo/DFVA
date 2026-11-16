@@ -34,6 +34,7 @@ export interface IStorage {
   getProductBySlug(slug: string): Promise<Product | undefined>;
   createProduct(product: InsertProduct): Promise<Product>;
   searchProducts(query: string): Promise<Product[]>;
+  exportRows(table: string, orderBy?: string, filter?: string): Promise<{ columns: string[]; rows: any[] }>;
   // RAG Knowledge Base
   createRagDocument(data: { userId: number; filename: string; contentType: string }): Promise<RagDocument>;
   updateRagDocumentStatus(id: number, status: string, chunkCount?: number): Promise<RagDocument>;
@@ -199,6 +200,14 @@ export class DatabaseStorage implements IStorage {
 
   async searchProducts(query: string): Promise<Product[]> {
     return await db.select().from(products).where(ilike(products.name, `%${query}%`));
+  }
+
+  async exportRows(table: string, orderBy?: string, filter?: string): Promise<{ columns: string[]; rows: any[] }> {
+    let query = `SELECT * FROM ${table}`;
+    if (filter) query += ` WHERE ${filter}`;
+    if (orderBy) query += ` ORDER BY ${orderBy}`;
+    const result = await pool.query(query);
+    return { columns: result.fields.map(f => f.name), rows: result.rows };
   }
 
   // Fixed: Using parameterized query with Drizzle ORM
