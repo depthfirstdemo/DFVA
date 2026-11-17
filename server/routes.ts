@@ -258,6 +258,29 @@ export async function registerRoutes(
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
 
+  // ── LINK PREVIEW ─────────────────────────────────────────────────────────────
+  // GET /api/link-preview?url= — fetch a URL server-side and return its title,
+  // description, and the raw response status. Used by the paste-a-link UI hook.
+  app.get("/api/link-preview", async (req, res) => {
+    const url = req.query.url as string;
+    if (!url) return res.status(400).json({ message: "url query parameter is required" });
+
+    try {
+      const r = await axios.get(url, { responseType: "text", timeout: 5000 });
+      const html = typeof r.data === "string" ? r.data : String(r.data);
+
+      const title = html.match(/<title[^>]*>([^<]*)<\/title>/i)?.[1]?.trim() ?? null;
+      const description =
+        html.match(/<meta[^>]+name=["']description["'][^>]*content=["']([^"']*)["']/i)?.[1]?.trim() ??
+        html.match(/<meta[^>]+property=["']og:description["'][^>]*content=["']([^"']*)["']/i)?.[1]?.trim() ??
+        null;
+
+      res.json({ title, description, status: r.status });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
   // ── BILLING / SUBSCRIPTION ROUTES ───────────────────────────────────────────
 
   // GET /api/billing/:userId
