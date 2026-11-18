@@ -51,7 +51,7 @@ export default function Workspaces() {
 
   const { data: scans = [] } = useQuery<any[]>({
     queryKey: ["/api/workspaces", selectedWs?.id, "scans"],
-    queryFn: () => fetch(`/api/workspaces/${selectedWs!.id}/scans`).then(r => r.json()),
+    queryFn: () => apiRequest("GET", `/api/workspaces/${selectedWs!.id}/scans`).then(r => r.json()),
     enabled: !!selectedWs,
   });
 
