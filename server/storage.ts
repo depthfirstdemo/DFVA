@@ -62,14 +62,14 @@ export interface IStorage {
   getTicketsByUser(userId: number): Promise<Ticket[]>;
   getTicket(id: number): Promise<Ticket | undefined>;
   updateTicketStatus(id: number, status: string): Promise<Ticket>;
-  // Workspaces — VULN: all methods perform no ownership / role verification
+  // Workspaces
   createWorkspace(data: { name: string; ownerId: number }): Promise<Workspace>;
   getWorkspace(id: number): Promise<Workspace | undefined>;
   getWorkspacesByUser(userId: number): Promise<Workspace[]>;
   addWorkspaceMember(data: { workspaceId: number; userId: number; role: string }): Promise<WorkspaceMember>;
   getWorkspaceMembers(workspaceId: number): Promise<(WorkspaceMember & { username: string; email: string | null })[]>;
   updateMemberRole(memberId: number, role: string): Promise<WorkspaceMember>;
-  removeWorkspaceMember(memberId: number): Promise<void>;
+  removeWorkspaceMember(workspaceId: number, memberId: number, callerUserId: number): Promise<"removed" | "not_found" | "forbidden" | "last_member" | "last_admin">;
   createInvitation(data: { workspaceId: number; email: string; role: string; token: string }): Promise<WorkspaceInvitation>;
   getInvitationByToken(token: string): Promise<WorkspaceInvitation | undefined>;
   acceptInvitation(token: string, userId: number, role: string): Promise<WorkspaceInvitation>;
@@ -350,7 +350,6 @@ export class DatabaseStorage implements IStorage {
   }
 
   // ── Workspaces ────────────────────────────────────────────────────────────────
-  // VULN: zero ownership / role enforcement in every method — API caller supplies IDs freely.
 
   async createWorkspace(data: { name: string; ownerId: number }): Promise<Workspace> {
     const [ws] = await db.insert(workspaces).values(data).returning();
@@ -399,9 +398,32 @@ export class DatabaseStorage implements IStorage {
     return member;
   }
 
-  // VULN: no check that caller is a workspace admin
-  async removeWorkspaceMember(memberId: number): Promise<void> {
-    await db.delete(workspaceMembers).where(eq(workspaceMembers.id, memberId));
+  async removeWorkspaceMember(
+    workspaceId: number,
+    memberId: number,
+    callerUserId: number,
+  ): Promise<"removed" | "not_found" | "forbidden" | "last_member" | "last_admin"> {
+    return db.transaction(async (tx) => {
+      const members = await tx.select()
+        .from(workspaceMembers)
+        .where(eq(workspaceMembers.workspaceId, workspaceId));
+      const target = members.find((member) => member.id === memberId);
+
+      if (!target) return "not_found";
+      if (!members.some((member) => member.userId === callerUserId && member.role === "admin")) {
+        return "forbidden";
+      }
+      if (members.length === 1) return "last_member";
+      if (target.role === "admin" && members.filter((member) => member.role === "admin").length === 1) {
+        return "last_admin";
+      }
+
+      await tx.delete(workspaceMembers).where(and(
+        eq(workspaceMembers.id, memberId),
+        eq(workspaceMembers.workspaceId, workspaceId),
+      ));
+      return "removed";
+    }, { isolationLevel: "serializable" });
   }
 
   // VULN: token is Math.random().toString(36).substring(2) — weak randomness, same as #13
