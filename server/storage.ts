@@ -1,14 +1,14 @@
 import { db, pool } from "./db";
 import {
   users, posts, invoices, walletTransactions, products, ragDocuments, ragChunks, scanJobs, tickets,
-  workspaces, workspaceMembers, workspaceInvitations, kbArticles, coupons,
+  workspaces, workspaceMembers, workspaceScanShares, workspaceInvitations, kbArticles, coupons,
   type User, type InsertUser, type Post, type InsertPost,
   type Invoice, type WalletTransaction, type Product, type InsertProduct,
   type RagDocument, type RagChunk, type ScanJob, type PlanKey, type Ticket,
-  type Workspace, type WorkspaceMember, type WorkspaceInvitation,
+  type Workspace, type WorkspaceMember, type WorkspaceScanShare, type WorkspaceInvitation,
   type KbArticle, type InsertKbArticle, type Coupon,
 } from "@shared/schema";
-import { eq, sql, ilike, lte, and, inArray, desc } from "drizzle-orm";
+import { eq, sql, ilike, lte, and, inArray, desc, getTableColumns } from "drizzle-orm";
 
 export interface IStorage {
   getUser(id: number): Promise<User | undefined>;
@@ -68,6 +68,9 @@ export interface IStorage {
   getWorkspacesByUser(userId: number): Promise<Workspace[]>;
   addWorkspaceMember(data: { workspaceId: number; userId: number; role: string }): Promise<WorkspaceMember>;
   getWorkspaceMembers(workspaceId: number): Promise<(WorkspaceMember & { username: string; email: string | null })[]>;
+  isWorkspaceMember(workspaceId: number, userId: number): Promise<boolean>;
+  getScansSharedToWorkspace(workspaceId: number): Promise<ScanJob[]>;
+  shareScanWithWorkspace(workspaceId: number, scanJobId: number, sharedByUserId: number): Promise<WorkspaceScanShare>;
   updateMemberRole(memberId: number, role: string): Promise<WorkspaceMember>;
   removeWorkspaceMember(memberId: number): Promise<void>;
   createInvitation(data: { workspaceId: number; email: string; role: string; token: string }): Promise<WorkspaceInvitation>;
@@ -391,6 +394,40 @@ export class DatabaseStorage implements IStorage {
       .innerJoin(users, eq(workspaceMembers.userId, users.id))
       .where(eq(workspaceMembers.workspaceId, workspaceId));
     return rows;
+  }
+
+  async isWorkspaceMember(workspaceId: number, userId: number): Promise<boolean> {
+    const [member] = await db.select({ id: workspaceMembers.id })
+      .from(workspaceMembers)
+      .where(and(
+        eq(workspaceMembers.workspaceId, workspaceId),
+        eq(workspaceMembers.userId, userId),
+      ));
+    return !!member;
+  }
+
+  async getScansSharedToWorkspace(workspaceId: number): Promise<ScanJob[]> {
+    return await db.select(getTableColumns(scanJobs))
+      .from(workspaceScanShares)
+      .innerJoin(scanJobs, eq(workspaceScanShares.scanJobId, scanJobs.id))
+      .where(eq(workspaceScanShares.workspaceId, workspaceId));
+  }
+
+  async shareScanWithWorkspace(workspaceId: number, scanJobId: number, sharedByUserId: number): Promise<WorkspaceScanShare> {
+    const [created] = await db.insert(workspaceScanShares)
+      .values({ workspaceId, scanJobId, sharedByUserId })
+      .onConflictDoNothing({
+        target: [workspaceScanShares.workspaceId, workspaceScanShares.scanJobId],
+      })
+      .returning();
+    if (created) return created;
+
+    const [existing] = await db.select().from(workspaceScanShares).where(and(
+      eq(workspaceScanShares.workspaceId, workspaceId),
+      eq(workspaceScanShares.scanJobId, scanJobId),
+    ));
+    if (!existing) throw new Error("Failed to create workspace scan share");
+    return existing;
   }
 
   // VULN: no check that caller is a workspace admin
