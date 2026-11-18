@@ -480,6 +480,7 @@ export async function registerRoutes(
   app.post("/api/auth/login", async (req, res) => {
     try {
       const { username, password } = req.body;
+      const next = (req.query.next as string | undefined) ?? "/";
       if (!username || !password) return res.status(400).json({ message: "Username and password are required." });
 
       const user = await storage.getUserByUsername(username);
@@ -504,8 +505,17 @@ export async function registerRoutes(
       // by changing the header to {"alg":"none"} and stripping the signature segment.
       const token = signToken({ userId: user.id, username: user.username, role: user.role ?? "user", plan: user.plan });
 
+      // Send the user on to the page they were trying to reach, if one was supplied.
+      if (req.query.next !== undefined) return res.redirect(next);
+
       res.json({ id: user.id, username: user.username, plan: user.plan, walletBalance: user.walletBalance, role: user.role, fullName: user.fullName, token });
     } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
+  // GET /api/auth/login?next=<url> — after login, return the user to their intended page.
+  app.get("/api/auth/login", (req, res) => {
+    const next = (req.query.next as string | undefined) ?? "/";
+    res.redirect(next);
   });
 
   app.post("/api/auth/logout", (_req, res) => {
