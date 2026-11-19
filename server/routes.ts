@@ -16,7 +16,7 @@ import { createRequire } from "module";
 // Use an absolute path derived from process.cwd() so createRequire works in both environments.
 const _require = createRequire(path.resolve("./package.json"));
 const pdfParse: (buf: Buffer) => Promise<{ text: string }> = _require("pdf-parse");
-import { calculateProration, applyCreditsToOrder, finalizeUpgrade, processDowngrade } from "./billing";
+import { calculateProration, applyCreditsToOrder, finalizeUpgrade, processDowngrade, SamePlanError } from "./billing";
 import { PLANS, type PlanKey } from "@shared/schema";
 import { chat, type ChatMessage } from "./chat";
 import { logLogin, logPayment, logPlanChange, logAccess } from "./logger";
@@ -299,7 +299,10 @@ export async function registerRoutes(
       const { userId, targetPlan, paymentMethod } = req.body;
       const result = await finalizeUpgrade(userId, targetPlan as PlanKey, paymentMethod);
       res.json({ message: `Upgraded to ${targetPlan}`, plan: result.plan, walletBalance: result.newBalance });
-    } catch (e: any) { res.status(500).json({ message: e.message }); }
+    } catch (e: any) {
+      if (e instanceof SamePlanError) return res.status(409).json({ message: e.message });
+      res.status(500).json({ message: e.message });
+    }
   });
 
   app.post(api.billing.downgrade.path, async (req, res) => {
@@ -719,7 +722,10 @@ export async function registerRoutes(
       logPayment({ userId: parseInt(userId), fullName: userRecord?.fullName ?? null, fromPlan, toPlan: result.plan, amount: parseFloat(result.walletBalance ?? "0"), ip });
 
       res.json({ message: "Payment successful", plan: result.plan, walletBalance: result.walletBalance });
-    } catch (e: any) { res.status(500).json({ message: e.message }); }
+    } catch (e: any) {
+      if (e instanceof SamePlanError) return res.status(409).json({ message: e.message });
+      res.status(500).json({ message: e.message });
+    }
   });
 
   // ── TOOL ACCESS CHECK ─────────────────────────────────────────────────────────
