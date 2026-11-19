@@ -3,6 +3,13 @@ import { PLANS, type PlanKey } from "@shared/schema";
 
 const BILLING_CYCLE_DAYS = 30;
 
+export class SamePlanError extends Error {
+  constructor() {
+    super("Already on this plan");
+    this.name = "SamePlanError";
+  }
+}
+
 export function calculateProration(currentPlan: PlanKey, daysRemaining: number): number {
   const plan = PLANS[currentPlan];
   if (!plan || plan.price === 0) return 0;
@@ -33,6 +40,10 @@ export async function applyCreditsToOrder(userId: number, orderAmount: number): 
 export async function finalizeUpgrade(userId: number, targetPlan: PlanKey, paymentMethod: string): Promise<{ newBalance: string; plan: string }> {
   const wallet = await storage.getUserWallet(userId);
   const currentPlan = wallet.plan as PlanKey;
+
+  if (targetPlan === currentPlan) {
+    throw new SamePlanError();
+  }
 
   const daysUsed = wallet.planStartDate
     ? Math.floor((Date.now() - new Date(wallet.planStartDate).getTime()) / 86400000)
