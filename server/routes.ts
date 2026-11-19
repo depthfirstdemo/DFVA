@@ -258,6 +258,24 @@ export async function registerRoutes(
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
 
+  // GET /api/links/preview?url=...
+  // Fetches a URL server-side and returns its title, description and status code
+  // so the UI can render a preview card when a user pastes a link into a note.
+  app.get("/api/links/preview", async (req, res) => {
+    const url = req.query.url as string;
+    if (!url) return res.status(400).json({ message: "URL required. Use: ?url=<link>" });
+    try {
+      const r = await axios.get(url, { timeout: 5000, responseType: "text" });
+      const html = typeof r.data === "string" ? r.data : String(r.data);
+      const title = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1].trim() ?? null;
+      const description =
+        html.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']*)["']/i)?.[1]?.trim() ??
+        html.match(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']*)["']/i)?.[1]?.trim() ??
+        null;
+      res.json({ url, status: r.status, title, description });
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
   // ── BILLING / SUBSCRIPTION ROUTES ───────────────────────────────────────────
 
   // GET /api/billing/:userId
