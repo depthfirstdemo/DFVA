@@ -11,6 +11,7 @@ import path from "path";
 import { signToken, requireAuth } from "./auth";
 import axios from "axios";
 import multer from "multer";
+import AdmZip from "adm-zip";
 import { createRequire } from "module";
 // import.meta.url is undefined in the CJS production bundle (esbuild format:"cjs").
 // Use an absolute path derived from process.cwd() so createRequire works in both environments.
@@ -1455,6 +1456,40 @@ export async function registerRoutes(
       uploaderUsername: c.uploaderUsername, filename: c.filename,
       chunkIndex: c.chunkIndex, content: c.content,
     })));
+  });
+
+  // ── PROJECT ASSET IMPORT ──────────────────────────────────────────────────────
+
+  const uploadZip = multer({ storage: multer.memoryStorage() });
+
+  // POST /api/projects/import
+  // Accepts a .zip archive and extracts it into uploads/<projectId>/.
+  app.post("/api/projects/import", requireAuth, uploadZip.single("archive"), (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ message: "archive required" });
+
+      const projectId = req.body.projectId as string;
+      if (!projectId) return res.status(400).json({ message: "projectId required" });
+
+      const destDir = path.join(process.cwd(), "uploads", projectId);
+      fs.mkdirSync(destDir, { recursive: true });
+
+      const zip = new AdmZip(req.file.buffer);
+      const entries = zip.getEntries();
+      const extracted: string[] = [];
+
+      for (const entry of entries) {
+        if (entry.isDirectory) continue;
+        const target = path.join(destDir, entry.entryName);
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, entry.getData());
+        extracted.push(entry.entryName);
+      }
+
+      res.json({ message: "Archive imported.", projectId, files: extracted });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
   });
 
   // ── SCHEDULED SCAN JOBS ───────────────────────────────────────────────────────
