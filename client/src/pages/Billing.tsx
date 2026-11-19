@@ -64,7 +64,7 @@ export default function Billing() {
     mutationFn: async (targetPlan: string) => {
       const res = await fetch(api.billing.upgrade.path, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("sentinel_token") ?? ""}` },
         body: JSON.stringify({ userId, targetPlan, paymentMethod }),
       });
       return handleResponse(res);
@@ -80,8 +80,8 @@ export default function Billing() {
     mutationFn: async (targetPlan: string) => {
       const res = await fetch(api.billing.downgrade.path, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, targetPlan }),
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("sentinel_token") ?? ""}` },
+        body: JSON.stringify({ targetPlan }),
       });
       return handleResponse(res);
     },

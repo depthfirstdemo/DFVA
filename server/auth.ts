@@ -1,6 +1,8 @@
-import { createHmac } from "crypto";
+import { createHmac, randomBytes } from "crypto";
 
-const SECRET = process.env.SESSION_SECRET ?? "sentinel-dev-fallback-secret-key";
+// Without a configured secret, use a per-process random key rather than a
+// publicly known fallback that would let anyone forge account tokens.
+const SECRET = process.env.SESSION_SECRET || randomBytes(32).toString("hex");
 
 export interface SentinelClaims {
   userId: number;

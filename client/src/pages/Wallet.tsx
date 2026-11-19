@@ -116,8 +116,8 @@ export default function Wallet() {
     mutationFn: (targetPlan: string) =>
       fetch("/api/billing/downgrade", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, targetPlan }),
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("sentinel_token") ?? ""}` },
+        body: JSON.stringify({ targetPlan }),
       }).then(async r => {
         const d = await r.json();
         if (!r.ok) throw new Error(d.message);
