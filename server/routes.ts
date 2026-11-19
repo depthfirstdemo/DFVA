@@ -1661,12 +1661,26 @@ export async function registerRoutes(
   });
 
   // PATCH /api/workspaces/:id/members/:memberId — change member role.
-  // VULN #50: no role check — any workspace member (even Viewer) can promote themselves to Admin.
-  app.patch("/api/workspaces/:id/members/:memberId", async (req, res) => {
+  app.patch("/api/workspaces/:id/members/:memberId", requireAuth, async (req, res) => {
     try {
+      const workspaceId = parseInt(req.params.id);
+      const memberId = parseInt(req.params.memberId);
       const { role } = req.body;
       if (!role) return res.status(400).json({ message: "role required" });
-      const member = await storage.updateMemberRole(parseInt(req.params.memberId), role);
+      if (!["viewer", "analyst", "admin"].includes(role)) {
+        return res.status(400).json({ message: "Invalid role" });
+      }
+
+      const members = await storage.getWorkspaceMembers(workspaceId);
+      const callerIsAdmin = members.some(
+        (m: any) => m.userId === req.sentinelUser.userId && m.role === "admin",
+      );
+      if (!callerIsAdmin) return res.status(403).json({ message: "Forbidden" });
+
+      const targetIsMember = members.some((m: any) => m.id === memberId);
+      if (!targetIsMember) return res.status(404).json({ message: "Member not found" });
+
+      const member = await storage.updateMemberRole(memberId, role);
       res.json(member);
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
